@@ -1,0 +1,446 @@
+import { Category, Product, Customer, UserProfile, CashRegister, BusinessConfig } from '../types';
+
+export const INITIAL_CONFIG: BusinessConfig = {
+  nombreNegocio: 'Pulpería La Bendición',
+  nombreComercial: 'Minimarket & Pulpería La Bendición',
+  monedaSimbolo: 'C$',
+  monedaCodigo: 'NIO',
+  telefono: '+505 8899-7766',
+  direccion: 'De la Iglesia El Carmen 2c. al Sur, 1/2c. Abajo',
+  mensajeTicket: '¡Gracias por apoyar a su pulpería de confianza! Dios bendiga su hogar.',
+  impuestoPorcentaje: 0.00,
+  sonidoEscanerActivo: true,
+  vibracionActiva: true,
+};
+
+export const INITIAL_USERS: UserProfile[] = [
+  {
+    id: 'u-1',
+    nombre: 'Don Manuel',
+    apellido: 'González',
+    rol: 'propietario',
+    sucursalId: 'suc-1',
+    pin: '1234',
+  },
+  {
+    id: 'u-2',
+    nombre: 'Rosa',
+    apellido: 'Martínez',
+    rol: 'cajero',
+    sucursalId: 'suc-1',
+    pin: '2222',
+  },
+  {
+    id: 'u-3',
+    nombre: 'Carlos',
+    apellido: 'Rivas',
+    rol: 'bodeguero',
+    sucursalId: 'suc-1',
+    pin: '3333',
+  },
+  {
+    id: 'u-4',
+    nombre: 'Lic. Morales',
+    apellido: 'Contador',
+    rol: 'contador',
+    sucursalId: 'suc-1',
+    pin: '4444',
+  }
+];
+
+export const INITIAL_CATEGORIES: Category[] = [
+  { id: 'cat-bebidas', nombre: 'Bebidas & Refrescos', icono: 'CupSoda', color: '#06b6d4' },
+  { id: 'cat-cervezas', nombre: 'Cervezas & Licores', icono: 'Beer', color: '#eab308' },
+  { id: 'cat-granos', nombre: 'Granos Básicos', icono: 'Wheat', color: '#f59e0b' },
+  { id: 'cat-lacteos', nombre: 'Lácteos & Huevos', icono: 'Egg', color: '#3b82f6' },
+  { id: 'cat-abarrotes', nombre: 'Abarrotes & Aceites', icono: 'Package', color: '#10b981' },
+  { id: 'cat-snacks', nombre: 'Snacks & Galletas', icono: 'Cookie', color: '#ec4899' },
+  { id: 'cat-limpieza', nombre: 'Limpieza & Hogar', icono: 'Sparkles', color: '#8b5cf6' },
+  { id: 'cat-cigarrillos', nombre: 'Cigarrillos', icono: 'Flame', color: '#ef4444' },
+];
+
+export const INITIAL_PRODUCTS: Product[] = [
+  {
+    id: 'p-coca-3l',
+    categoriaId: 'cat-bebidas',
+    nombre: 'Coca-Cola Desechable 3 Litros',
+    unidadMedidaBase: 'unidad',
+    permiteDecimales: false,
+    esFavorito: true,
+    stockMinimo: 6,
+    stockMaximo: 60,
+    perecedero: true,
+    fechaVencimientoProxima: '2026-12-15',
+    existenciaBase: 28,
+    presentaciones: [
+      {
+        id: 'pres-coca3-unid',
+        productoId: 'p-coca-3l',
+        nombre: 'Unidad',
+        factorConversion: 1,
+        codigoBarras: '741100180010',
+        precioCosto: 75.00,
+        precioVenta: 95.00,
+        precioMayoreo: 90.00,
+        esPresentacionBase: true,
+        activo: true,
+      },
+      {
+        id: 'pres-coca3-fardo',
+        productoId: 'p-coca-3l',
+        nombre: 'Fardo x 6 Unidades',
+        factorConversion: 6,
+        codigoBarras: '741100180011',
+        precioCosto: 450.00,
+        precioVenta: 540.00,
+        precioMayoreo: 520.00,
+        esPresentacionBase: false,
+        activo: true,
+      }
+    ]
+  },
+  {
+    id: 'p-coca-500ml',
+    categoriaId: 'cat-bebidas',
+    nombre: 'Coca-Cola 500ml Vidrio Retornable',
+    unidadMedidaBase: 'unidad',
+    permiteDecimales: false,
+    esFavorito: true,
+    stockMinimo: 24,
+    stockMaximo: 120,
+    perecedero: true,
+    fechaVencimientoProxima: '2026-11-20',
+    existenciaBase: 56,
+    presentaciones: [
+      {
+        id: 'pres-coca500-unid',
+        productoId: 'p-coca-500ml',
+        nombre: 'Unidad',
+        factorConversion: 1,
+        codigoBarras: '741100180015',
+        precioCosto: 18.00,
+        precioVenta: 25.00,
+        precioMayoreo: 22.00,
+        esPresentacionBase: true,
+        activo: true,
+      },
+      {
+        id: 'pres-coca500-caja',
+        productoId: 'p-coca-500ml',
+        nombre: 'Caja x 24 Unidades',
+        factorConversion: 24,
+        codigoBarras: '741100180016',
+        precioCosto: 432.00,
+        precioVenta: 550.00,
+        esPresentacionBase: false,
+        activo: true,
+      }
+    ]
+  },
+  {
+    id: 'p-tona-lata',
+    categoriaId: 'cat-cervezas',
+    nombre: 'Cerveza Toña Lata 350ml',
+    unidadMedidaBase: 'unidad',
+    permiteDecimales: false,
+    esFavorito: true,
+    stockMinimo: 24,
+    stockMaximo: 144,
+    perecedero: true,
+    fechaVencimientoProxima: '2027-01-10',
+    existenciaBase: 72,
+    presentaciones: [
+      {
+        id: 'pres-tona-unid',
+        productoId: 'p-tona-lata',
+        nombre: 'Lata Suelta',
+        factorConversion: 1,
+        codigoBarras: '741100180020',
+        precioCosto: 35.00,
+        precioVenta: 45.00,
+        precioMayoreo: 42.00,
+        esPresentacionBase: true,
+        activo: true,
+      },
+      {
+        id: 'pres-tona-six',
+        productoId: 'p-tona-lata',
+        nombre: 'Six-Pack (6 Latas)',
+        factorConversion: 6,
+        codigoBarras: '741100180021',
+        precioCosto: 210.00,
+        precioVenta: 250.00,
+        precioMayoreo: 240.00,
+        esPresentacionBase: false,
+        activo: true,
+      },
+      {
+        id: 'pres-tona-caja',
+        productoId: 'p-tona-lata',
+        nombre: 'Caja x 24 Latas',
+        factorConversion: 24,
+        codigoBarras: '741100180022',
+        precioCosto: 840.00,
+        precioVenta: 980.00,
+        precioMayoreo: 950.00,
+        esPresentacionBase: false,
+        activo: true,
+      }
+    ]
+  },
+  {
+    id: 'p-frijol-rojo',
+    categoriaId: 'cat-granos',
+    nombre: 'Frijoles Rojos de Seda (Nacional)',
+    unidadMedidaBase: 'libra',
+    permiteDecimales: true,
+    esFavorito: true,
+    stockMinimo: 25,
+    stockMaximo: 300,
+    perecedero: false,
+    existenciaBase: 140, // 140 libras
+    presentaciones: [
+      {
+        id: 'pres-frijol-libra',
+        productoId: 'p-frijol-rojo',
+        nombre: 'Libra (Granel)',
+        factorConversion: 1,
+        codigoBarras: '741100180030',
+        precioCosto: 28.00,
+        precioVenta: 35.00,
+        precioMayoreo: 33.00,
+        esPresentacionBase: true,
+        activo: true,
+      },
+      {
+        id: 'pres-frijol-saco',
+        productoId: 'p-frijol-rojo',
+        nombre: 'Saco Quintal (100 lb)',
+        factorConversion: 100,
+        codigoBarras: '741100180031',
+        precioCosto: 2700.00,
+        precioVenta: 3200.00,
+        esPresentacionBase: false,
+        activo: true,
+      }
+    ]
+  },
+  {
+    id: 'p-arroz-faisan',
+    categoriaId: 'cat-granos',
+    nombre: 'Arroz Faisán 96/4 Grano Entero',
+    unidadMedidaBase: 'libra',
+    permiteDecimales: true,
+    esFavorito: true,
+    stockMinimo: 30,
+    stockMaximo: 250,
+    perecedero: false,
+    existenciaBase: 95,
+    presentaciones: [
+      {
+        id: 'pres-arroz-libra',
+        productoId: 'p-arroz-faisan',
+        nombre: 'Libra',
+        factorConversion: 1,
+        codigoBarras: '741100180035',
+        precioCosto: 18.00,
+        precioVenta: 22.00,
+        precioMayoreo: 20.00,
+        esPresentacionBase: true,
+        activo: true,
+      }
+    ]
+  },
+  {
+    id: 'p-aceite-ideal',
+    categoriaId: 'cat-abarrotes',
+    nombre: 'Aceite Vegetal Ideal 1 Litro',
+    unidadMedidaBase: 'unidad',
+    permiteDecimales: false,
+    esFavorito: true,
+    stockMinimo: 12,
+    stockMaximo: 60,
+    perecedero: true,
+    fechaVencimientoProxima: '2027-04-30',
+    existenciaBase: 18,
+    presentaciones: [
+      {
+        id: 'pres-aceite-unid',
+        productoId: 'p-aceite-ideal',
+        nombre: 'Botella 1L',
+        factorConversion: 1,
+        codigoBarras: '741100180040',
+        precioCosto: 58.00,
+        precioVenta: 72.00,
+        esPresentacionBase: true,
+        activo: true,
+      },
+      {
+        id: 'pres-aceite-caja',
+        productoId: 'p-aceite-ideal',
+        nombre: 'Caja x 12 Litros',
+        factorConversion: 12,
+        codigoBarras: '741100180041',
+        precioCosto: 696.00,
+        precioVenta: 820.00,
+        esPresentacionBase: false,
+        activo: true,
+      }
+    ]
+  },
+  {
+    id: 'p-huevos-granja',
+    categoriaId: 'cat-lacteos',
+    nombre: 'Huevos Blancos de Granja',
+    unidadMedidaBase: 'unidad',
+    permiteDecimales: false,
+    esFavorito: true,
+    stockMinimo: 30,
+    stockMaximo: 300,
+    perecedero: true,
+    fechaVencimientoProxima: '2026-10-15',
+    existenciaBase: 120, // 120 huevos = 4 cajillas
+    presentaciones: [
+      {
+        id: 'pres-huevo-unid',
+        productoId: 'p-huevos-granja',
+        nombre: 'Unidad',
+        factorConversion: 1,
+        codigoBarras: '741100180045',
+        precioCosto: 6.00,
+        precioVenta: 8.00,
+        esPresentacionBase: true,
+        activo: true,
+      },
+      {
+        id: 'pres-huevo-cajilla',
+        productoId: 'p-huevos-granja',
+        nombre: 'Cajilla x 30 Huevos',
+        factorConversion: 30,
+        codigoBarras: '741100180046',
+        precioCosto: 180.00,
+        precioVenta: 220.00,
+        esPresentacionBase: false,
+        activo: true,
+      }
+    ]
+  },
+  {
+    id: 'p-belmont-blue',
+    categoriaId: 'cat-cigarrillos',
+    nombre: 'Cigarrillos Belmont Blue',
+    unidadMedidaBase: 'unidad',
+    permiteDecimales: false,
+    esFavorito: true,
+    stockMinimo: 40,
+    stockMaximo: 200,
+    perecedero: false,
+    existenciaBase: 140, // 140 cigarrillos = 7 cajetillas
+    presentaciones: [
+      {
+        id: 'pres-belmont-suelto',
+        productoId: 'p-belmont-blue',
+        nombre: 'Cigarro Suelto',
+        factorConversion: 1,
+        codigoBarras: '741100180050',
+        precioCosto: 5.00,
+        precioVenta: 8.00,
+        esPresentacionBase: true,
+        activo: true,
+      },
+      {
+        id: 'pres-belmont-cajetilla',
+        productoId: 'p-belmont-blue',
+        nombre: 'Cajetilla x 20 Cigarrillos',
+        factorConversion: 20,
+        codigoBarras: '741100180051',
+        precioCosto: 100.00,
+        precioVenta: 130.00,
+        esPresentacionBase: false,
+        activo: true,
+      }
+    ]
+  },
+  {
+    id: 'p-queso-seco',
+    categoriaId: 'cat-lacteos',
+    nombre: 'Queso Morolique Seco de Boaco',
+    unidadMedidaBase: 'libra',
+    permiteDecimales: true,
+    esFavorito: true,
+    stockMinimo: 10,
+    stockMaximo: 80,
+    perecedero: true,
+    fechaVencimientoProxima: '2026-10-05',
+    existenciaBase: 26.5,
+    presentaciones: [
+      {
+        id: 'pres-queso-libra',
+        productoId: 'p-queso-seco',
+        nombre: 'Libra',
+        factorConversion: 1,
+        codigoBarras: '741100180055',
+        precioCosto: 75.00,
+        precioVenta: 92.00,
+        esPresentacionBase: true,
+        activo: true,
+      }
+    ]
+  }
+];
+
+export const INITIAL_CUSTOMERS: Customer[] = [
+  {
+    id: 'cust-1',
+    nombre: 'Carlos Enrique Mora',
+    apodo: 'Don Carlos (Mecánico)',
+    telefono: '8844-1122',
+    whatsapp: '50588441122',
+    direccion: 'Frente al Taller Mora',
+    limiteCredito: 1500.00,
+    saldoDeudorActual: 450.00,
+    plazoDias: 15,
+    bloqueadoPorMora: false,
+    activo: true,
+  },
+  {
+    id: 'cust-2',
+    nombre: 'Martha Lorena Pineda',
+    apodo: 'Profesora Martha',
+    telefono: '8722-3344',
+    whatsapp: '50587223344',
+    direccion: 'Casa verde esquinera #12',
+    limiteCredito: 2500.00,
+    saldoDeudorActual: 1850.00,
+    plazoDias: 30,
+    bloqueadoPorMora: false,
+    activo: true,
+  },
+  {
+    id: 'cust-3',
+    nombre: 'Roberto José Gutiérrez',
+    apodo: 'Don Chepe Panadero',
+    telefono: '8911-5544',
+    whatsapp: '50589115544',
+    direccion: 'Costado Norte del Parque',
+    limiteCredito: 800.00,
+    saldoDeudorActual: 850.00,
+    plazoDias: 8,
+    bloqueadoPorMora: true,
+    activo: true,
+  }
+];
+
+export const INITIAL_REGISTER: CashRegister = {
+  id: 'caja-1',
+  nombre: 'Caja Principal (Mostrador 1)',
+  codigo: 'CAJA-01',
+  estado: 'abierta',
+  aperturaActual: {
+    id: 'aper-01',
+    usuarioId: 'u-2',
+    usuarioNombre: 'Rosa Martínez (Cajera)',
+    fechaApertura: new Date().toISOString(),
+    montoInicial: 1000.00, // C$ 1,000 en fondo de cambio
+  }
+};
