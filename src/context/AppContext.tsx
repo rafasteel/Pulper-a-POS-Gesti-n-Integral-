@@ -28,6 +28,15 @@ import {
 } from '../utils/mockData';
 import { soundManager } from '../utils/audioHaptics';
 import confetti from 'canvas-confetti';
+import {
+  isSupabaseConfigured,
+  loginWithSupabaseAuth,
+  logoutSupabaseAuth,
+  fetchUserProfileLive,
+  fetchLiveCatalog,
+  fetchLiveCustomers,
+  insertLiveSale,
+} from '../services/supabaseService';
 
 interface HeldCart {
   id: string;
@@ -44,6 +53,17 @@ interface AppContextType {
   config: BusinessConfig;
   updateConfig: (newConfig: Partial<BusinessConfig>) => void;
   
+  // Autenticación Real & Sesión
+  isAuthenticated: boolean;
+  isSupabaseConnected: boolean;
+  isProcessingSale: boolean;
+  isLoadingLiveCatalog: boolean;
+  loginWithPinCode: (pin: string, userId?: string) => Promise<{ success: boolean; user?: UserProfile; error?: string }>;
+  loginWithEmail: (email: string, pass: string) => Promise<{ success: boolean; user?: UserProfile; error?: string }>;
+  logout: () => Promise<void>;
+  lockScreen: () => void;
+  syncLiveCatalog: () => Promise<void>;
+
   // SaaS Multi-Tenant & Subscription Management
   tenants: SaaSTenant[];
   currentTenant: SaaSTenant;
@@ -81,7 +101,7 @@ interface AppContextType {
     montoRecibido?: number;
     clienteId?: string;
     referencia?: string;
-  }) => { success: boolean; sale?: Sale; error?: string };
+  }) => Promise<{ success: boolean; sale?: Sale; error?: string }>;
   
   // Barcode & Product
   findProductByBarcode: (barcode: string) => { product: Product; presentation: ProductPresentation } | null;
@@ -111,8 +131,17 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<UserProfile>(INITIAL_USERS[2]); // Rosa (Cajera) por defecto
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return Boolean(localStorage.getItem('pulperia_auth_user'));
+  });
+  const [currentUser, setCurrentUser] = useState<UserProfile>(() => {
+    const saved = localStorage.getItem('pulperia_auth_user');
+    return saved ? JSON.parse(saved) : INITIAL_USERS[2]; // Rosa (Cajera) por defecto
+  });
   const [users] = useState<UserProfile[]>(INITIAL_USERS);
+  const [isProcessingSale, setIsProcessingSale] = useState<boolean>(false);
+  const [isLoadingLiveCatalog, setIsLoadingLiveCatalog] = useState<boolean>(false);
+  const isSupabaseConnected = isSupabaseConfigured();
   
   // Estado de Inquilinos SaaS
   const [tenants, setTenants] = useState<SaaSTenant[]>(() => {
@@ -132,7 +161,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { ...base, nombreNegocio: currentTenant.nombre };
   });
 
-  const [categories] = useState<Category[]>(INITIAL_CATEGORIES);
+  const [categories, setCategories] = useState<Category[]>(INITIAL_CATEGORIES);
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem('pulperia_products');
     return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
@@ -242,6 +271,103 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setTenants(prev => [newTenant, ...prev]);
     return newTenant;
+  };
+
+  // Sincronización en vivo con Supabase
+  const syncLiveCatalog = async () => {
+    if (!isSupabaseConfigured()) return;
+    setIsLoadingLiveCatalog(true);
+    try {
+      const liveData = await fetchLiveCatalog(currentTenantId);
+      if (liveData && liveData.products.length > 0) {
+        setProducts(liveData.products);
+        setCategories(liveData.categories);
+      }
+      const liveCustomers = await fetchLiveCustomers(currentTenantId);
+      if (liveCustomers && liveCustomers.length > 0) {
+        setCustomers(liveCustomers);
+      }
+    } catch (err) {
+      console.warn('Aviso: Fallback a catálogo local:', err);
+    } finally {
+      setIsLoadingLiveCatalog(false);
+    }
+  };
+
+  useEffect(() => {
+    syncLiveCatalog();
+  }, [currentTenantId]);
+
+  // Autenticación por PIN táctil
+  const loginWithPinCode = async (pin: string, userId?: string) => {
+    let targetUser = userId ? users.find(u => u.id === userId) : users.find(u => u.pin === pin);
+    if (!targetUser) {
+      targetUser = users.find(u => u.pin === pin);
+    }
+
+    if (targetUser && targetUser.pin === pin) {
+      setCurrentUser(targetUser);
+      setIsAuthenticated(true);
+      localStorage.setItem('pulperia_auth_user', JSON.stringify(targetUser));
+      if (targetUser.negocioId) {
+        switchTenant(targetUser.negocioId);
+      }
+      return { success: true, user: targetUser };
+    }
+    return { success: false, error: 'PIN incorrecto. Intente nuevamente.' };
+  };
+
+  // Autenticación por Correo y Contraseña
+  const loginWithEmail = async (emailToAuth: string, pass: string) => {
+    if (isSupabaseConfigured()) {
+      const { data, error } = await loginWithSupabaseAuth(emailToAuth, pass);
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      if (data?.user) {
+        const liveProfile = await fetchUserProfileLive(data.user.id);
+        const activeProfile: UserProfile = liveProfile || {
+          id: data.user.id,
+          nombre: data.user.user_metadata?.nombre || emailToAuth.split('@')[0],
+          apellido: data.user.user_metadata?.apellido || '',
+          email: data.user.email,
+          rol: (data.user.user_metadata?.rol || 'cajero') as any,
+          pin: '1234',
+        };
+        setCurrentUser(activeProfile);
+        setIsAuthenticated(true);
+        localStorage.setItem('pulperia_auth_user', JSON.stringify(activeProfile));
+        if (activeProfile.negocioId) {
+          switchTenant(activeProfile.negocioId);
+        }
+        return { success: true, user: activeProfile };
+      }
+    }
+
+    // Modo local / Fallback para cuentas de prueba del Seed
+    const matchingMock = users.find(u => u.email?.toLowerCase() === emailToAuth.toLowerCase());
+    if (matchingMock) {
+      setCurrentUser(matchingMock);
+      setIsAuthenticated(true);
+      localStorage.setItem('pulperia_auth_user', JSON.stringify(matchingMock));
+      if (matchingMock.negocioId) {
+        switchTenant(matchingMock.negocioId);
+      }
+      return { success: true, user: matchingMock };
+    }
+
+    return { success: false, error: 'Credenciales inválidas o no registradas' };
+  };
+
+  const logout = async () => {
+    await logoutSupabaseAuth();
+    setIsAuthenticated(false);
+    localStorage.removeItem('pulperia_auth_user');
+  };
+
+  const lockScreen = () => {
+    setIsAuthenticated(false);
+    localStorage.removeItem('pulperia_auth_user');
   };
 
   const updateConfig = (newConfig: Partial<BusinessConfig>) => {
@@ -378,146 +504,165 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Completar venta y descontar existencias con lógica de factores de conversión
-  const completeSale = (paymentInfo: {
+  const completeSale = async (paymentInfo: {
     metodo: 'efectivo' | 'tarjeta' | 'transferencia' | 'fiado' | 'mixto';
     montoRecibido?: number;
     clienteId?: string;
     referencia?: string;
-  }) => {
-    // Verificación SaaS: Bloqueo de ventas si la suscripción está suspendida
-    if (isCurrentTenantSuspended && currentUser.rol !== 'superadmin') {
-      soundManager.playError();
-      return {
-        success: false,
-        error: 'Suscripción suspendida. El negocio no tiene permitido registrar nuevas ventas hasta regularizar su pago.',
-      };
+  }): Promise<{ success: boolean; sale?: Sale; error?: string }> => {
+    if (isProcessingSale) {
+      return { success: false, error: 'Procesando venta previa...' };
     }
+    setIsProcessingSale(true);
 
-    if (cart.length === 0) {
-      soundManager.playError();
-      return { success: false, error: 'El carrito está vacío' };
-    }
-
-    const subtotal = cart.reduce((sum, i) => sum + i.cantidad * i.precioUnitario, 0);
-    const totalDescuento = cart.reduce((sum, i) => sum + i.descuentoUnitario * i.cantidad, 0);
-    const total = Number((subtotal - totalDescuento).toFixed(2));
-    const costoTotal = cart.reduce(
-      (sum, i) => sum + i.cantidad * i.presentacion.factorConversion * i.costoUnitarioBase,
-      0
-    );
-    const utilidadEstimada = Number((total - costoTotal).toFixed(2));
-
-    let cliente: Customer | undefined;
-    if (paymentInfo.clienteId) {
-      cliente = customers.find(c => c.id === paymentInfo.clienteId);
-      if (paymentInfo.metodo === 'fiado' && cliente) {
-        if (cliente.saldoDeudorActual + total > cliente.limiteCredito) {
-          soundManager.playError();
-          return {
-            success: false,
-            error: `Límite de crédito excedido. Límite: ${config.monedaSimbolo}${cliente.limiteCredito}, Deuda actual: ${config.monedaSimbolo}${cliente.saldoDeudorActual}`,
-          };
-        }
-      }
-    }
-
-    const ticketNumber = `T-${String(salesHistory.length + 1).padStart(5, '0')}`;
-    const newSale: Sale = {
-      id: `sale-${Date.now()}`,
-      numeroTicket: ticketNumber,
-      fechaHora: new Date().toISOString(),
-      clienteId: cliente?.id,
-      clienteNombre: cliente ? `${cliente.nombre} (${cliente.apodo || ''})` : undefined,
-      cajeroId: currentUser.id,
-      cajeroNombre: `${currentUser.nombre} ${currentUser.apellido}`,
-      tipoVenta: paymentInfo.metodo === 'fiado' ? 'credito_fiado' : 'contado',
-      items: [...cart],
-      subtotal,
-      descuento: totalDescuento,
-      impuesto: 0,
-      total,
-      costoTotal,
-      utilidadEstimada,
-      pagos: [
-        {
-          metodoPago: paymentInfo.metodo,
-          monto: total,
-          montoRecibido: paymentInfo.montoRecibido,
-          cambio: paymentInfo.montoRecibido ? Math.max(0, paymentInfo.montoRecibido - total) : 0,
-          referencia: paymentInfo.referencia,
-        },
-      ],
-      estado: 'completada',
-    };
-
-    // 1. Descontar inventario en unidades base y registrar en Kardex
-    const updatedProducts = [...products];
-    const newKardexEntries: KardexMovement[] = [];
-
-    cart.forEach(item => {
-      const prodIndex = updatedProducts.findIndex(p => p.id === item.producto.id);
-      if (prodIndex > -1) {
-        const prod = updatedProducts[prodIndex];
-        const descontarBase = item.cantidad * item.presentacion.factorConversion;
-        const saldoAnterior = prod.existenciaBase;
-        const saldoNuevo = Number((saldoAnterior - descontarBase).toFixed(2));
-
-        updatedProducts[prodIndex] = {
-          ...prod,
-          existenciaBase: saldoNuevo,
+    try {
+      // Verificación SaaS: Bloqueo de ventas si la suscripción está suspendida
+      if (isCurrentTenantSuspended && currentUser.rol !== 'superadmin') {
+        soundManager.playError();
+        return {
+          success: false,
+          error: 'Suscripción suspendida. El negocio no tiene permitido registrar nuevas ventas hasta regularizar su pago.',
         };
-
-        newKardexEntries.push({
-          id: `kdx-${Date.now()}-${item.id}`,
-          fecha: new Date().toISOString(),
-          productoId: prod.id,
-          productoNombre: `${prod.nombre} (${item.presentacion.nombre})`,
-          tipo: 'venta',
-          cantidadBase: -descontarBase,
-          saldoAnterior,
-          saldoNuevo,
-          costoUnitarioBase: item.costoUnitarioBase,
-          referencia: `Venta Ticket ${ticketNumber}`,
-          usuario: currentUser.nombre,
-        });
       }
-    });
 
-    setProducts(updatedProducts);
-    setKardex(prev => [...newKardexEntries, ...prev]);
+      if (cart.length === 0) {
+        soundManager.playError();
+        return { success: false, error: 'El carrito está vacío' };
+      }
 
-    // 2. Si fue fiado, actualizar la deuda del cliente
-    if (paymentInfo.metodo === 'fiado' && cliente) {
-      setCustomers(prev =>
-        prev.map(c => {
-          if (c.id === cliente?.id) {
+      const subtotal = cart.reduce((sum, i) => sum + i.cantidad * i.precioUnitario, 0);
+      const totalDescuento = cart.reduce((sum, i) => sum + i.descuentoUnitario * i.cantidad, 0);
+      const total = Number((subtotal - totalDescuento).toFixed(2));
+      const costoTotal = cart.reduce(
+        (sum, i) => sum + i.cantidad * i.presentacion.factorConversion * i.costoUnitarioBase,
+        0
+      );
+      const utilidadEstimada = Number((total - costoTotal).toFixed(2));
+
+      let cliente: Customer | undefined;
+      if (paymentInfo.clienteId) {
+        cliente = customers.find(c => c.id === paymentInfo.clienteId);
+        if (paymentInfo.metodo === 'fiado' && cliente) {
+          if (cliente.saldoDeudorActual + total > cliente.limiteCredito) {
+            soundManager.playError();
             return {
-              ...c,
-              saldoDeudorActual: Number((c.saldoDeudorActual + total).toFixed(2)),
+              success: false,
+              error: `Límite de crédito excedido. Límite: ${config.monedaSimbolo}${cliente.limiteCredito}, Deuda actual: ${config.monedaSimbolo}${cliente.saldoDeudorActual}`,
             };
           }
-          return c;
-        })
-      );
-    }
+        }
+      }
 
-    // 3. Registrar venta y limpiar carrito
-    setSalesHistory(prev => [newSale, ...prev]);
-    setCart([]);
+      const ticketNumber = `T-${String(salesHistory.length + 1).padStart(5, '0')}`;
+      const newSale: Sale = {
+        id: `sale-${Date.now()}`,
+        numeroTicket: ticketNumber,
+        fechaHora: new Date().toISOString(),
+        clienteId: cliente?.id,
+        clienteNombre: cliente ? `${cliente.nombre} (${cliente.apodo || ''})` : undefined,
+        cajeroId: currentUser.id,
+        cajeroNombre: `${currentUser.nombre} ${currentUser.apellido}`,
+        tipoVenta: paymentInfo.metodo === 'fiado' ? 'credito_fiado' : 'contado',
+        items: [...cart],
+        subtotal,
+        descuento: totalDescuento,
+        impuesto: 0,
+        total,
+        costoTotal,
+        utilidadEstimada,
+        pagos: [
+          {
+            metodoPago: paymentInfo.metodo,
+            monto: total,
+            montoRecibido: paymentInfo.montoRecibido,
+            cambio: paymentInfo.montoRecibido ? Math.max(0, paymentInfo.montoRecibido - total) : 0,
+            referencia: paymentInfo.referencia,
+          },
+        ],
+        estado: 'completada',
+      };
 
-    // 4. Feedback audiovisual
-    soundManager.playPaymentSuccess();
-    try {
-      confetti({
-        particleCount: 50,
-        spread: 60,
-        origin: { y: 0.8 },
+      // 1. Guardar en Supabase si está configurado
+      if (isSupabaseConfigured()) {
+        const insertResult = await insertLiveSale(newSale, currentTenantId);
+        if (!insertResult.success) {
+          console.warn('Aviso: Venta respaldada localmente (Supabase:', insertResult.error, ')');
+        } else if (insertResult.saleId) {
+          newSale.id = insertResult.saleId;
+        }
+      }
+
+      // 2. Descontar inventario en unidades base y registrar en Kardex
+      const updatedProducts = [...products];
+      const newKardexEntries: KardexMovement[] = [];
+
+      cart.forEach(item => {
+        const prodIndex = updatedProducts.findIndex(p => p.id === item.producto.id);
+        if (prodIndex > -1) {
+          const prod = updatedProducts[prodIndex];
+          const descontarBase = item.cantidad * item.presentacion.factorConversion;
+          const saldoAnterior = prod.existenciaBase;
+          const saldoNuevo = Number((saldoAnterior - descontarBase).toFixed(2));
+
+          updatedProducts[prodIndex] = {
+            ...prod,
+            existenciaBase: saldoNuevo,
+          };
+
+          newKardexEntries.push({
+            id: `kdx-${Date.now()}-${item.id}`,
+            fecha: new Date().toISOString(),
+            productoId: prod.id,
+            productoNombre: `${prod.nombre} (${item.presentacion.nombre})`,
+            tipo: 'venta',
+            cantidadBase: -descontarBase,
+            saldoAnterior,
+            saldoNuevo,
+            costoUnitarioBase: item.costoUnitarioBase,
+            referencia: `Venta Ticket ${ticketNumber}`,
+            usuario: currentUser.nombre,
+          });
+        }
       });
-    } catch {
-      // ignorar si no soporta
-    }
 
-    return { success: true, sale: newSale };
+      setProducts(updatedProducts);
+      setKardex(prev => [...newKardexEntries, ...prev]);
+
+      // 3. Si fue fiado, actualizar la deuda del cliente
+      if (paymentInfo.metodo === 'fiado' && cliente) {
+        setCustomers(prev =>
+          prev.map(c => {
+            if (c.id === cliente?.id) {
+              return {
+                ...c,
+                saldoDeudorActual: Number((c.saldoDeudorActual + total).toFixed(2)),
+              };
+            }
+            return c;
+          })
+        );
+      }
+
+      // 4. Registrar venta y limpiar carrito
+      setSalesHistory(prev => [newSale, ...prev]);
+      setCart([]);
+
+      // 5. Feedback audiovisual
+      soundManager.playPaymentSuccess();
+      try {
+        confetti({
+          particleCount: 50,
+          spread: 60,
+          origin: { y: 0.8 },
+        });
+      } catch {
+        // ignorar si no soporta
+      }
+
+      return { success: true, sale: newSale };
+    } finally {
+      setIsProcessingSale(false);
+    }
   };
 
   // Registro ultra-rápido de producto no catalogado
@@ -732,6 +877,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         users,
         config,
         updateConfig,
+        isAuthenticated,
+        isSupabaseConnected,
+        isProcessingSale,
+        isLoadingLiveCatalog,
+        loginWithPinCode,
+        loginWithEmail,
+        logout,
+        lockScreen,
+        syncLiveCatalog,
         tenants,
         currentTenant,
         switchTenant,

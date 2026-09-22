@@ -9,8 +9,12 @@ import {
   Smartphone,
   ChevronDown,
   Clock,
+  Database,
+  RefreshCw,
+  LogOut,
 } from 'lucide-react';
 import { soundManager } from '../../utils/audioHaptics';
+import { SupabaseConfigModal } from '../common/SupabaseConfigModal';
 
 interface HeaderProps {
   onOpenQRPairModal: () => void;
@@ -27,8 +31,13 @@ export const Header: React.FC<HeaderProps> = ({ onOpenQRPairModal, onOpenHeldCar
     cashRegister, 
     heldCarts,
     currentTenant,
+    isSupabaseConnected,
+    isLoadingLiveCatalog,
+    syncLiveCatalog,
+    lockScreen,
   } = useApp();
   const [showUserDropdown, setShowUserDropdown] = useState(false);
+  const [showConfigModal, setShowConfigModal] = useState(false);
   const [time, setTime] = useState(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
   React.useEffect(() => {
@@ -116,7 +125,31 @@ export const Header: React.FC<HeaderProps> = ({ onOpenQRPairModal, onOpenHeldCar
       </div>
 
       {/* Derecha: Reloj, Sonido y Cambio Rápido de Cajero/Usuario */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3">
+        {/* Indicador de Conexión Supabase */}
+        {isSupabaseConnected ? (
+          <button
+            type="button"
+            onClick={() => syncLiveCatalog()}
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-semibold hover:bg-emerald-500/20 transition cursor-pointer"
+            title="Conectado a Supabase en la nube. Clic para recargar catálogo."
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span className="hidden xl:inline">Live Cloud</span>
+            <RefreshCw className={`w-3 h-3 ${isLoadingLiveCatalog ? 'animate-spin' : ''}`} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowConfigModal(true)}
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-semibold hover:bg-amber-500/20 transition cursor-pointer"
+            title="Configurar conexión con Supabase"
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span className="hidden xl:inline">Conectar Supabase</span>
+          </button>
+        )}
+
         {/* Toggle de Sonido */}
         <button
           onClick={toggleSound}
@@ -184,7 +217,27 @@ export const Header: React.FC<HeaderProps> = ({ onOpenQRPairModal, onOpenHeldCar
             </div>
           )}
         </div>
+
+        {/* Botón Bloquear Terminal / Cerrar Turno */}
+        <button
+          type="button"
+          onClick={() => {
+            soundManager.playTouchClick();
+            lockScreen();
+          }}
+          className="p-2 rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-slate-700 transition cursor-pointer"
+          title="Bloquear terminal y cerrar turno"
+        >
+          <LogOut className="w-4 h-4" />
+        </button>
       </div>
+
+      {/* Modal de Configuración Supabase */}
+      <SupabaseConfigModal
+        isOpen={showConfigModal}
+        onClose={() => setShowConfigModal(false)}
+        onConnected={() => syncLiveCatalog()}
+      />
     </header>
   );
 };

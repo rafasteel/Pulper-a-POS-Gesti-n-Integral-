@@ -16,10 +16,11 @@ import { QRPairModal } from './components/pos/QRPairModal';
 import { HeldCartsModal } from './components/pos/HeldCartsModal';
 import { SuperAdminView } from './views/SuperAdminView';
 import { SubscriptionLockedScreen } from './components/common/SubscriptionLockedScreen';
+import { LoginView } from './views/LoginView';
 import { useApp } from './context/AppContext';
 
 const MainApp: React.FC = () => {
-  const { isCurrentTenantSuspended, currentUser } = useApp();
+  const { isCurrentTenantSuspended, currentUser, isAuthenticated } = useApp();
   const [activeTab, setActiveTab] = useState<NavTab>(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('tab') === 'superadmin' || window.location.pathname.includes('/superadmin')) {
@@ -43,6 +44,11 @@ const MainApp: React.FC = () => {
       setActiveTab('superadmin');
     }
   }, []);
+
+  // Si no ha iniciado sesión, mostrar la pantalla de login con teclado táctil por PIN y Supabase
+  if (!isAuthenticated) {
+    return <LoginView />;
+  }
 
   // Si es el modo escáner móvil puro (abierto por QR en celular)
   if (isStandaloneMobileScanner) {

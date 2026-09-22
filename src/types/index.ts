@@ -26,6 +26,8 @@ export interface UserProfile {
   id: string;
   nombre: string;
   apellido: string;
+  email?: string;
+  telefono?: string;
   rol: RoleCode;
   sucursalId?: string;
   negocioId?: string;

@@ -258,3 +258,107 @@ INSERT INTO clientes (id, negocio_id, nombre, apodo, telefono, whatsapp, direcci
 ('c0000000-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', 'Martha Lorena Pineda', 'Profesora Martha', '8722-3344', '50587223344', 'Casa verde esquinera #12', 2500.00, 1850.00, 30, false),
 ('c0000000-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', 'Roberto José Gutiérrez', 'Don Chepe Panadero', '8911-5544', '50589115544', 'Costado Norte del Parque', 800.00, 850.00, 8, true)
 ON CONFLICT (id) DO NOTHING;
+
+-- ==============================================================================
+-- 8. USUARIOS AUTENTICADOS (auth.users & usuarios_perfiles)
+-- ==============================================================================
+
+-- Cuenta 1: Super Admin (Dueño de Plataforma)
+INSERT INTO auth.users (
+    instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+    raw_app_meta_data, raw_user_meta_data, is_super_admin, created_at, updated_at
+) VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    'u0000000-0000-0000-0000-000000000001',
+    'authenticated',
+    'authenticated',
+    'admin@pulposaas.com',
+    crypt('SuperAdmin2026!', gen_salt('bf')),
+    now(),
+    '{"provider":"email","providers":["email"]}',
+    '{"nombre":"Rafael","apellido":"Super Admin"}',
+    false,
+    now(),
+    now()
+) ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO usuarios_perfiles (id, negocio_id, sucursal_id, rol_id, nombre, apellido, telefono, pin_seguridad_hash, activo) VALUES
+('u0000000-0000-0000-0000-000000000001', NULL, NULL, 'a0000000-0000-0000-0000-000000000001', 'Rafael', 'Super Admin', '+504 9999-8888', '9999', true)
+ON CONFLICT (id) DO UPDATE SET rol_id = EXCLUDED.rol_id, pin_seguridad_hash = EXCLUDED.pin_seguridad_hash;
+
+-- Cuenta 2: Don Manuel (Propietario Pulpería La Bendición - ACTIVA)
+INSERT INTO auth.users (
+    instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+    raw_app_meta_data, raw_user_meta_data, is_super_admin, created_at, updated_at
+) VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    'u0000000-0000-0000-0000-000000000002',
+    'authenticated',
+    'authenticated',
+    'donmanuel@labendicion.com',
+    crypt('Pulperia123!', gen_salt('bf')),
+    now(),
+    '{"provider":"email","providers":["email"]}',
+    '{"nombre":"Don Manuel","apellido":"Mendoza"}',
+    false,
+    now(),
+    now()
+) ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO usuarios_perfiles (id, negocio_id, sucursal_id, rol_id, nombre, apellido, telefono, pin_seguridad_hash, activo) VALUES
+('u0000000-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111112', 'a0000000-0000-0000-0000-000000000002', 'Don Manuel', 'Mendoza', '+505 8899-7766', '1234', true)
+ON CONFLICT (id) DO UPDATE SET rol_id = EXCLUDED.rol_id, pin_seguridad_hash = EXCLUDED.pin_seguridad_hash;
+
+-- Cuenta 3: Rosa Gómez (Cajera Pulpería La Bendición)
+INSERT INTO auth.users (
+    instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+    raw_app_meta_data, raw_user_meta_data, is_super_admin, created_at, updated_at
+) VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    'u0000000-0000-0000-0000-000000000003',
+    'authenticated',
+    'authenticated',
+    'rosa@labendicion.com',
+    crypt('Cajera123!', gen_salt('bf')),
+    now(),
+    '{"provider":"email","providers":["email"]}',
+    '{"nombre":"Rosa","apellido":"Gómez"}',
+    false,
+    now(),
+    now()
+) ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO usuarios_perfiles (id, negocio_id, sucursal_id, rol_id, nombre, apellido, telefono, pin_seguridad_hash, activo) VALUES
+('u0000000-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111112', 'a0000000-0000-0000-0000-000000000004', 'Rosa', 'Gómez', '+505 8811-9922', '4321', true)
+ON CONFLICT (id) DO UPDATE SET rol_id = EXCLUDED.rol_id, pin_seguridad_hash = EXCLUDED.pin_seguridad_hash;
+
+-- Cuenta 4: Carlos (Propietario Minimarket El Ahorro - SUSPENDIDA)
+INSERT INTO auth.users (
+    instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+    raw_app_meta_data, raw_user_meta_data, is_super_admin, created_at, updated_at
+) VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    'u0000000-0000-0000-0000-000000000004',
+    'authenticated',
+    'authenticated',
+    'carlos@elahorro.com',
+    crypt('ElAhorro123!', gen_salt('bf')),
+    now(),
+    '{"provider":"email","providers":["email"]}',
+    '{"nombre":"Carlos","apellido":"Pérez"}',
+    false,
+    now(),
+    now()
+) ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO usuarios_perfiles (id, negocio_id, sucursal_id, rol_id, nombre, apellido, telefono, pin_seguridad_hash, activo) VALUES
+('u0000000-0000-0000-0000-000000000004', '22222222-2222-2222-2222-222222222221', '22222222-2222-2222-2222-222222222222', 'a0000000-0000-0000-0000-000000000002', 'Carlos', 'Pérez', '+505 8711-2233', '5555', true)
+ON CONFLICT (id) DO UPDATE SET rol_id = EXCLUDED.rol_id, pin_seguridad_hash = EXCLUDED.pin_seguridad_hash;
+
+-- ==============================================================================
+-- 9. APERTURA DE CAJA INICIAL ACTIVA PARA CAJA-01 (La Bendición)
+-- ==============================================================================
+INSERT INTO aperturas_caja (id, caja_id, usuario_apertura_id, monto_inicial_efectivo, estado, fecha_apertura, notas) VALUES
+('ap000000-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111115', 'u0000000-0000-0000-0000-000000000003', 1000.00, 'abierta', NOW(), 'Turno Matutino Inicial')
+ON CONFLICT (id) DO NOTHING;
+

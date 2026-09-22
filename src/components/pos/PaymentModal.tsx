@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   Receipt,
   MessageCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { soundManager } from '../../utils/audioHaptics';
 
@@ -19,7 +20,7 @@ interface PaymentModalProps {
 }
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose }) => {
-  const { cart, config, customers, completeSale } = useApp();
+  const { cart, config, customers, completeSale, isProcessingSale } = useApp();
 
   const total = cart.reduce((sum, item) => sum + item.subtotal, 0);
 
@@ -28,6 +29,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose }) =
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>(customers[0]?.id || '');
   const [reference, setReference] = useState<string>('');
   const [completedSaleTicket, setCompletedSaleTicket] = useState<any | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
@@ -39,24 +41,31 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose }) =
   // Botones de denominaciones rápidas
   const quickBills = [50, 100, 200, 500, 1000];
 
-  const handleConfirmPayment = () => {
+  const handleConfirmPayment = async () => {
+    if (isSubmitting || isProcessingSale) return;
+
     if (paymentMethod === 'efectivo' && numCashReceived < total) {
       soundManager.playError();
       alert(`El monto recibido (${config.monedaSimbolo}${numCashReceived}) es menor al total (${config.monedaSimbolo}${total})`);
       return;
     }
 
-    const result = completeSale({
-      metodo: paymentMethod,
-      montoRecibido: paymentMethod === 'efectivo' ? numCashReceived : total,
-      clienteId: paymentMethod === 'fiado' ? selectedCustomerId : undefined,
-      referencia: reference || undefined,
-    });
+    setIsSubmitting(true);
+    try {
+      const result = await completeSale({
+        metodo: paymentMethod,
+        montoRecibido: paymentMethod === 'efectivo' ? numCashReceived : total,
+        clienteId: paymentMethod === 'fiado' ? selectedCustomerId : undefined,
+        referencia: reference || undefined,
+      });
 
-    if (result.success && result.sale) {
-      setCompletedSaleTicket(result.sale);
-    } else {
-      alert(result.error || 'Error al procesar la venta');
+      if (result.success && result.sale) {
+        setCompletedSaleTicket(result.sale);
+      } else {
+        alert(result.error || 'Error al procesar la venta');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -365,11 +374,22 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose }) =
 
             {/* Botón de Confirmación Principal */}
             <button
+              type="button"
               onClick={handleConfirmPayment}
-              className="w-full h-12 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition cursor-pointer active:scale-95"
+              disabled={isSubmitting || isProcessingSale}
+              className="w-full h-12 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition cursor-pointer active:scale-95"
             >
-              <CheckCircle2 className="w-5 h-5 text-slate-950" />
-              <span>Confirmar Venta ({config.monedaSimbolo}{total.toFixed(2)})</span>
+              {isSubmitting || isProcessingSale ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin text-slate-950" />
+                  <span>Registrando Venta en Supabase...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-5 h-5 text-slate-950" />
+                  <span>Confirmar Venta ({config.monedaSimbolo}{total.toFixed(2)})</span>
+                </>
+              )}
             </button>
           </div>
         )}

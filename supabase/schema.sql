@@ -760,6 +760,36 @@ CREATE POLICY "Tenant isolation sesiones escaner"
 ON sesiones_escaner_movil FOR ALL
 USING (is_superadmin() OR negocio_id = get_my_negocio_id());
 
+CREATE POLICY "Tenant isolation para usuarios_perfiles"
+ON usuarios_perfiles FOR ALL
+USING (is_superadmin() OR id = auth.uid() OR negocio_id = get_my_negocio_id());
+
+CREATE POLICY "Tenant isolation para categorias_productos"
+ON categorias_productos FOR ALL
+USING (is_superadmin() OR negocio_id = get_my_negocio_id());
+
+CREATE POLICY "Tenant isolation para venta_detalles"
+ON venta_detalles FOR ALL
+USING (is_superadmin() OR venta_id IN (SELECT id FROM ventas WHERE negocio_id = get_my_negocio_id()));
+
+CREATE POLICY "Tenant isolation para pagos_venta"
+ON pagos_venta FOR ALL
+USING (is_superadmin() OR venta_id IN (SELECT id FROM ventas WHERE negocio_id = get_my_negocio_id()));
+
+CREATE POLICY "Tenant isolation para existencias"
+ON existencias FOR ALL
+USING (is_superadmin() OR sucursal_id IN (SELECT id FROM sucursales WHERE negocio_id = get_my_negocio_id()));
+
+CREATE POLICY "Tenant isolation para movimientos_inventario"
+ON movimientos_inventario FOR ALL
+USING (is_superadmin() OR sucursal_id IN (SELECT id FROM sucursales WHERE negocio_id = get_my_negocio_id()));
+
+ALTER TABLE roles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Lectura publica para roles" ON roles FOR SELECT USING (true);
+
+ALTER TABLE metodos_pago ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Lectura publica para metodos_pago" ON metodos_pago FOR SELECT USING (true);
+
 -- ==============================================================================
 -- 11. DATOS SEMILLA BÁSICOS (ROLES Y MÉTODOS DE PAGO)
 -- ==============================================================================
