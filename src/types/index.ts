@@ -1,11 +1,34 @@
-export type RoleCode = 'propietario' | 'administrador' | 'cajero' | 'bodeguero' | 'contador';
+export type RoleCode = 'superadmin' | 'propietario' | 'administrador' | 'cajero' | 'bodeguero' | 'contador';
+
+export type SubscriptionStatus = 'activa' | 'suspendida' | 'prueba' | 'vencida';
+export type SubscriptionPlan = 'basico' | 'pro' | 'empresarial';
+
+export interface SaaSTenant {
+  id: string;
+  nombre: string;
+  nombreComercial?: string;
+  subdominio?: string;
+  propietarioNombre: string;
+  email: string;
+  telefono: string;
+  whatsapp?: string;
+  direccion?: string;
+  estadoSuscripcion: SubscriptionStatus;
+  plan: SubscriptionPlan;
+  precioMensual: number;
+  fechaVencimiento: string;
+  limiteSucursales: number;
+  limiteUsuarios: number;
+  creadoEn: string;
+}
 
 export interface UserProfile {
   id: string;
   nombre: string;
   apellido: string;
   rol: RoleCode;
-  sucursalId: string;
+  sucursalId?: string;
+  negocioId?: string;
   avatarUrl?: string;
   pin: string;
 }

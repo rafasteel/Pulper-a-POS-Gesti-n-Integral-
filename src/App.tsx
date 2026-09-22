@@ -14,20 +14,33 @@ import { CopilotView } from './views/CopilotView';
 import { SettingsView } from './views/SettingsView';
 import { QRPairModal } from './components/pos/QRPairModal';
 import { HeldCartsModal } from './components/pos/HeldCartsModal';
+import { SuperAdminView } from './views/SuperAdminView';
+import { SubscriptionLockedScreen } from './components/common/SubscriptionLockedScreen';
+import { useApp } from './context/AppContext';
 
 const MainApp: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<NavTab>('pos');
+  const { isCurrentTenantSuspended, currentUser } = useApp();
+  const [activeTab, setActiveTab] = useState<NavTab>(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') === 'superadmin' || window.location.pathname.includes('/superadmin')) {
+      return 'superadmin';
+    }
+    return 'pos';
+  });
   const [isQRPairOpen, setIsQRPairOpen] = useState(false);
   const [isHeldOpen, setIsHeldOpen] = useState(false);
   const [isStandaloneMobileScanner, setIsStandaloneMobileScanner] = useState(false);
   const [scannerToken, setScannerToken] = useState('caja-1');
 
-  // Detectar si se abrió directamente desde el código QR en un teléfono móvil
+  // Detectar si se abrió directamente desde el código QR en un teléfono móvil o ruta superadmin
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('mode') === 'scanner') {
       setIsStandaloneMobileScanner(true);
       setScannerToken(params.get('token') || 'caja-1');
+    }
+    if (params.get('tab') === 'superadmin' || window.location.pathname.includes('/superadmin')) {
+      setActiveTab('superadmin');
     }
   }, []);
 
@@ -42,6 +55,16 @@ const MainApp: React.FC = () => {
         }}
       />
     );
+  }
+
+  // Vista de Super Administrador SaaS (Master Platform Owner)
+  if (activeTab === 'superadmin') {
+    return <SuperAdminView onBackToPOS={() => setActiveTab('pos')} />;
+  }
+
+  // Si la pulpería actual está suspendida por falta de pago y no es Super Admin, mostrar bloqueo de suscripción
+  if (isCurrentTenantSuspended && currentUser.rol !== 'superadmin') {
+    return <SubscriptionLockedScreen />;
   }
 
   return (

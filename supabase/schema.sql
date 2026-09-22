@@ -26,6 +26,13 @@ CREATE TABLE IF NOT EXISTS negocios (
     direccion TEXT,
     logo_url TEXT,
     mensaje_ticket TEXT DEFAULT '¡Gracias por su compra en su pulpería amiga!',
+    -- Control de Suscripción SaaS Multi-Tenant
+    estado_suscripcion TEXT NOT NULL DEFAULT 'prueba' CHECK (estado_suscripcion IN ('activa', 'suspendida', 'prueba', 'vencida')),
+    fecha_vencimiento DATE DEFAULT (CURRENT_DATE + INTERVAL '15 days'),
+    plan TEXT NOT NULL DEFAULT 'basico' CHECK (plan IN ('basico', 'pro', 'empresarial')),
+    precio_mensual NUMERIC(10, 2) DEFAULT 15.00,
+    limite_sucursales INT DEFAULT 1,
+    limite_usuarios INT DEFAULT 3,
     configuraciones JSONB DEFAULT '{
         "permite_fiado_sin_limite": false,
         "imprimir_recibo_automatico": false,
@@ -53,10 +60,10 @@ CREATE TABLE IF NOT EXISTS sucursales (
 
 CREATE TABLE IF NOT EXISTS roles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    codigo TEXT UNIQUE NOT NULL, -- 'propietario', 'administrador', 'cajero', 'bodeguero', 'contador'
+    codigo TEXT UNIQUE NOT NULL, -- 'superadmin', 'propietario', 'administrador', 'cajero', 'bodeguero', 'contador'
     nombre TEXT NOT NULL,
     descripcion TEXT,
-    nivel_jerarquia INT NOT NULL DEFAULT 1 -- 100: Propietario, 80: Admin, 50: Bodega/Contador, 20: Cajero
+    nivel_jerarquia INT NOT NULL DEFAULT 1 -- 1000: Superadmin, 100: Propietario, 80: Admin, 50: Bodega/Contador, 20: Cajero
 );
 
 CREATE TABLE IF NOT EXISTS permisos (
@@ -74,7 +81,7 @@ CREATE TABLE IF NOT EXISTS roles_permisos (
 
 CREATE TABLE IF NOT EXISTS usuarios_perfiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    negocio_id UUID NOT NULL REFERENCES negocios(id) ON DELETE CASCADE,
+    negocio_id UUID REFERENCES negocios(id) ON DELETE CASCADE, -- NULL únicamente para Super Admin de plataforma
     sucursal_id UUID REFERENCES sucursales(id) ON DELETE SET NULL,
     rol_id UUID NOT NULL REFERENCES roles(id),
     nombre TEXT NOT NULL,
@@ -681,6 +688,18 @@ ALTER TABLE compras ENABLE ROW LEVEL SECURITY;
 ALTER TABLE gastos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sesiones_escaner_movil ENABLE ROW LEVEL SECURITY;
 
+-- Función de ayuda: comprueba si el usuario autenticado es Super Admin del SaaS
+CREATE OR REPLACE FUNCTION is_superadmin()
+RETURNS BOOLEAN AS $$
+    SELECT COALESCE(
+        (SELECT r.codigo = 'superadmin' 
+         FROM usuarios_perfiles u 
+         JOIN roles r ON r.id = u.rol_id 
+         WHERE u.id = auth.uid() LIMIT 1),
+        false
+    );
+$$ LANGUAGE sql STABLE SECURITY DEFINER;
+
 -- Función de ayuda: obtiene el negocio_id del usuario autenticado
 CREATE OR REPLACE FUNCTION get_my_negocio_id()
 RETURNS UUID AS $$
@@ -696,37 +715,58 @@ RETURNS TEXT AS $$
     WHERE u.id = auth.uid() LIMIT 1;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
--- Políticas de aislamiento Multi-Tenant (Mismo negocio)
+-- Función de ayuda: verifica si la pulpería está al día con su suscripción
+CREATE OR REPLACE FUNCTION is_my_negocio_activo()
+RETURNS BOOLEAN AS $$
+    SELECT COALESCE(
+        (SELECT estado_suscripcion IN ('activa', 'prueba') 
+         FROM negocios 
+         WHERE id = get_my_negocio_id()),
+        false
+    );
+$$ LANGUAGE sql STABLE SECURITY DEFINER;
+
+-- Políticas de aislamiento Multi-Tenant (Mismo negocio) y Bypass para Super Admin
+CREATE POLICY "Tenant isolation para negocios"
+ON negocios FOR ALL
+USING (is_superadmin() OR id = get_my_negocio_id());
+
 CREATE POLICY "Tenant isolation para productos"
 ON productos FOR ALL
-USING (negocio_id = get_my_negocio_id());
+USING (is_superadmin() OR negocio_id = get_my_negocio_id());
 
 CREATE POLICY "Tenant isolation para presentaciones"
 ON presentaciones_producto FOR ALL
-USING (producto_id IN (SELECT id FROM productos WHERE negocio_id = get_my_negocio_id()));
+USING (is_superadmin() OR producto_id IN (SELECT id FROM productos WHERE negocio_id = get_my_negocio_id()));
 
-CREATE POLICY "Tenant isolation para ventas"
-ON ventas FOR ALL
-USING (negocio_id = get_my_negocio_id());
+-- En ventas: Se permite lectura, pero se BLOQUEA la creación/edición de ventas si la suscripción está suspendida
+CREATE POLICY "Tenant read para ventas"
+ON ventas FOR SELECT
+USING (is_superadmin() OR negocio_id = get_my_negocio_id());
+
+CREATE POLICY "Tenant insert para ventas (Activas o Superadmin)"
+ON ventas FOR INSERT
+WITH CHECK (is_superadmin() OR (negocio_id = get_my_negocio_id() AND is_my_negocio_activo()));
 
 CREATE POLICY "Tenant isolation para clientes"
 ON clientes FOR ALL
-USING (negocio_id = get_my_negocio_id());
+USING (is_superadmin() OR negocio_id = get_my_negocio_id());
 
 CREATE POLICY "Tenant isolation para cierres de caja"
 ON cierres_caja FOR ALL
-USING (apertura_id IN (SELECT ac.id FROM aperturas_caja ac JOIN cajas c ON c.id = ac.caja_id JOIN sucursales s ON s.id = c.sucursal_id WHERE s.negocio_id = get_my_negocio_id()));
+USING (is_superadmin() OR apertura_id IN (SELECT ac.id FROM aperturas_caja ac JOIN cajas c ON c.id = ac.caja_id JOIN sucursales s ON s.id = c.sucursal_id WHERE s.negocio_id = get_my_negocio_id()));
 
 CREATE POLICY "Tenant isolation sesiones escaner"
 ON sesiones_escaner_movil FOR ALL
-USING (negocio_id = get_my_negocio_id());
+USING (is_superadmin() OR negocio_id = get_my_negocio_id());
 
 -- ==============================================================================
 -- 11. DATOS SEMILLA BÁSICOS (ROLES Y MÉTODOS DE PAGO)
 -- ==============================================================================
 
 INSERT INTO roles (codigo, nombre, descripcion, nivel_jerarquia) VALUES
-('propietario', 'Dueño / Propietario', 'Acceso irrestricto a finanzas, configuración y múltiples sucursales', 100),
+('superadmin', 'Super Administrador (SaaS Vendor)', 'Control total sobre todos los clientes, suscripciones y configuración de la plataforma SaaS', 1000),
+('propietario', 'Dueño / Propietario', 'Acceso irrestricto a finanzas, configuración y múltiples sucursales de su pulpería', 100),
 ('administrador', 'Administrador de Tienda', 'Gestión de catálogo, compras, inventario, reportes y aprobaciones', 80),
 ('cajero', 'Cajero de Mostrador', 'Operación de POS, aperturas, ventas, cobros y arqueos ciegos', 30),
 ('bodeguero', 'Bodeguero / Almacén', 'Recepción de mercadería, control de inventario y conteo físico', 40),
@@ -740,3 +780,4 @@ INSERT INTO metodos_pago (codigo, nombre, requiere_referencia, activo) VALUES
 ('fiado', 'Crédito de Pulpería (Fiado)', false, true),
 ('mixto', 'Pago Mixto (Efectivo + Otro)', false, true)
 ON CONFLICT (codigo) DO NOTHING;
+

@@ -18,7 +18,16 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ onOpenQRPairModal, onOpenHeldCartsModal }) => {
-  const { currentUser, setCurrentUser, users, config, updateConfig, cashRegister, heldCarts } = useApp();
+  const { 
+    currentUser, 
+    setCurrentUser, 
+    users, 
+    config, 
+    updateConfig, 
+    cashRegister, 
+    heldCarts,
+    currentTenant,
+  } = useApp();
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [time, setTime] = useState(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
@@ -38,7 +47,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenQRPairModal, onOpenHeldCar
 
   return (
     <header className="h-14 bg-slate-900/95 border-b border-slate-800 px-4 flex items-center justify-between select-none backdrop-blur-sm z-30">
-      {/* Izquierda: Logotipo y Nombre de Pulpería */}
+      {/* Izquierda: Logotipo, Nombre de Pulpería y Estado SaaS */}
       <div className="flex items-center gap-3">
         <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 text-white font-black text-lg">
           <Store className="w-5 h-5 text-slate-950" />
@@ -46,11 +55,21 @@ export const Header: React.FC<HeaderProps> = ({ onOpenQRPairModal, onOpenHeldCar
         <div>
           <div className="flex items-center gap-2">
             <span className="font-bold text-white text-base tracking-tight leading-none">
-              {config.nombreNegocio}
+              {currentTenant.nombre}
             </span>
-            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              POS Retail
-            </span>
+            {currentTenant.estadoSuscripcion === 'activa' ? (
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                Plan {currentTenant.plan} • Activa
+              </span>
+            ) : currentTenant.estadoSuscripcion === 'prueba' ? (
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/30">
+                Plan {currentTenant.plan} • Prueba
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/30 animate-pulse">
+                Suspendida
+              </span>
+            )}
           </div>
           <span className="text-xs text-slate-400 leading-none">
             {cashRegister.nombre} • <span className="text-emerald-400 font-medium">En Línea</span>

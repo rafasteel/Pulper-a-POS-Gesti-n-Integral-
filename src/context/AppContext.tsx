@@ -13,6 +13,9 @@ import {
   CashClosingReport,
   KardexMovement,
   OperationalExpense,
+  SaaSTenant,
+  SubscriptionStatus,
+  SubscriptionPlan,
 } from '../types';
 import {
   INITIAL_CONFIG,
@@ -21,6 +24,7 @@ import {
   INITIAL_PRODUCTS,
   INITIAL_CUSTOMERS,
   INITIAL_REGISTER,
+  INITIAL_TENANTS,
 } from '../utils/mockData';
 import { soundManager } from '../utils/audioHaptics';
 import confetti from 'canvas-confetti';
@@ -39,6 +43,16 @@ interface AppContextType {
   users: UserProfile[];
   config: BusinessConfig;
   updateConfig: (newConfig: Partial<BusinessConfig>) => void;
+  
+  // SaaS Multi-Tenant & Subscription Management
+  tenants: SaaSTenant[];
+  currentTenant: SaaSTenant;
+  switchTenant: (tenantId: string) => void;
+  toggleTenantSubscription: (tenantId: string, status: SubscriptionStatus) => void;
+  updateTenantPlan: (tenantId: string, plan: SubscriptionPlan) => void;
+  addNewTenant: (tenantData: Omit<SaaSTenant, 'id' | 'creadoEn'>) => SaaSTenant;
+  isCurrentTenantSuspended: boolean;
+
   categories: Category[];
   products: Product[];
   customers: Customer[];
@@ -97,12 +111,27 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<UserProfile>(INITIAL_USERS[1]); // Rosa (Cajera)
+  const [currentUser, setCurrentUser] = useState<UserProfile>(INITIAL_USERS[2]); // Rosa (Cajera) por defecto
   const [users] = useState<UserProfile[]>(INITIAL_USERS);
+  
+  // Estado de Inquilinos SaaS
+  const [tenants, setTenants] = useState<SaaSTenant[]>(() => {
+    const saved = localStorage.getItem('pulperia_saas_tenants');
+    return saved ? JSON.parse(saved) : INITIAL_TENANTS;
+  });
+  const [currentTenantId, setCurrentTenantId] = useState<string>(() => {
+    return localStorage.getItem('pulperia_active_tenant_id') || INITIAL_TENANTS[0].id;
+  });
+
+  const currentTenant = tenants.find(t => t.id === currentTenantId) || tenants[0];
+  const isCurrentTenantSuspended = currentTenant.estadoSuscripcion === 'suspendida';
+
   const [config, setConfig] = useState<BusinessConfig>(() => {
     const saved = localStorage.getItem('pulperia_config');
-    return saved ? JSON.parse(saved) : INITIAL_CONFIG;
+    const base = saved ? JSON.parse(saved) : INITIAL_CONFIG;
+    return { ...base, nombreNegocio: currentTenant.nombre };
   });
+
   const [categories] = useState<Category[]>(INITIAL_CATEGORIES);
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem('pulperia_products');
@@ -150,6 +179,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem('pulperia_sales', JSON.stringify(salesHistory));
   }, [salesHistory]);
+
+  // Persistencia SaaS Multi-Tenant
+  useEffect(() => {
+    localStorage.setItem('pulperia_saas_tenants', JSON.stringify(tenants));
+  }, [tenants]);
+
+  useEffect(() => {
+    localStorage.setItem('pulperia_active_tenant_id', currentTenantId);
+  }, [currentTenantId]);
+
+  const switchTenant = (tenantId: string) => {
+    const found = tenants.find(t => t.id === tenantId);
+    if (found) {
+      setCurrentTenantId(tenantId);
+      setConfig(prev => ({
+        ...prev,
+        nombreNegocio: found.nombre,
+      }));
+    }
+  };
+
+  const toggleTenantSubscription = (tenantId: string, status?: SubscriptionStatus) => {
+    setTenants(prev =>
+      prev.map(t => {
+        if (t.id === tenantId) {
+          const nuevoEstado = status || (t.estadoSuscripcion === 'suspendida' ? 'activa' : 'suspendida');
+          return {
+            ...t,
+            estadoSuscripcion: nuevoEstado,
+            fechaVencimiento: nuevoEstado === 'activa' && new Date(t.fechaVencimiento) < new Date()
+              ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+              : t.fechaVencimiento,
+          };
+        }
+        return t;
+      })
+    );
+  };
+
+  const updateTenantPlan = (tenantId: string, plan: SubscriptionPlan) => {
+    setTenants(prev =>
+      prev.map(t => {
+        if (t.id === tenantId) {
+          const precio = plan === 'basico' ? 15 : plan === 'pro' ? 29 : 49;
+          return {
+            ...t,
+            plan,
+            precioMensual: precio,
+          };
+        }
+        return t;
+      })
+    );
+  };
+
+  const addNewTenant = (tenantData: Omit<SaaSTenant, 'id' | 'creadoEn'>): SaaSTenant => {
+    const newTenant: SaaSTenant = {
+      ...tenantData,
+      id: `tenant-${Date.now()}`,
+      creadoEn: new Date().toISOString(),
+    };
+    setTenants(prev => [newTenant, ...prev]);
+    return newTenant;
+  };
 
   const updateConfig = (newConfig: Partial<BusinessConfig>) => {
     setConfig(prev => {
@@ -291,6 +384,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     clienteId?: string;
     referencia?: string;
   }) => {
+    // Verificación SaaS: Bloqueo de ventas si la suscripción está suspendida
+    if (isCurrentTenantSuspended && currentUser.rol !== 'superadmin') {
+      soundManager.playError();
+      return {
+        success: false,
+        error: 'Suscripción suspendida. El negocio no tiene permitido registrar nuevas ventas hasta regularizar su pago.',
+      };
+    }
+
     if (cart.length === 0) {
       soundManager.playError();
       return { success: false, error: 'El carrito está vacío' };
@@ -630,6 +732,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         users,
         config,
         updateConfig,
+        tenants,
+        currentTenant,
+        switchTenant,
+        toggleTenantSubscription,
+        updateTenantPlan,
+        addNewTenant,
+        isCurrentTenantSuspended,
         categories,
         products,
         customers,

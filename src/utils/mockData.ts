@@ -1,4 +1,58 @@
-import { Category, Product, Customer, UserProfile, CashRegister, BusinessConfig } from '../types';
+import { Category, Product, Customer, UserProfile, CashRegister, BusinessConfig, SaaSTenant } from '../types';
+
+export const INITIAL_TENANTS: SaaSTenant[] = [
+  {
+    id: 'tenant-1',
+    nombre: 'Pulpería La Bendición',
+    nombreComercial: 'Minimarket & Pulpería La Bendición',
+    propietarioNombre: 'Don Manuel González',
+    email: 'contacto@labendicion.com',
+    telefono: '+505 8899-7766',
+    whatsapp: '50588997766',
+    direccion: 'De la Iglesia El Carmen 2c. al Sur, 1/2c. Abajo',
+    estadoSuscripcion: 'activa',
+    plan: 'pro',
+    precioMensual: 25.00,
+    fechaVencimiento: '2027-12-31',
+    limiteSucursales: 2,
+    limiteUsuarios: 5,
+    creadoEn: '2026-01-10',
+  },
+  {
+    id: 'tenant-2',
+    nombre: 'Minimarket El Ahorro',
+    nombreComercial: 'El Ahorro Express',
+    propietarioNombre: 'Carlos Morales',
+    email: 'carlos@elahorro.com',
+    telefono: '+505 8711-2233',
+    whatsapp: '50587112233',
+    direccion: 'Frente a la rotonda El Güegüense',
+    estadoSuscripcion: 'suspendida',
+    plan: 'basico',
+    precioMensual: 15.00,
+    fechaVencimiento: '2026-09-01',
+    limiteSucursales: 1,
+    limiteUsuarios: 2,
+    creadoEn: '2026-02-15',
+  },
+  {
+    id: 'tenant-3',
+    nombre: 'Abarrotes Doña Julia',
+    nombreComercial: 'Tienda Doña Julia',
+    propietarioNombre: 'Julia Mendoza',
+    email: 'julia@abarrotes.com',
+    telefono: '+505 8655-4433',
+    whatsapp: '50586554433',
+    direccion: 'Barrio San José, terminal de buses',
+    estadoSuscripcion: 'prueba',
+    plan: 'basico',
+    precioMensual: 15.00,
+    fechaVencimiento: '2026-09-29',
+    limiteSucursales: 1,
+    limiteUsuarios: 2,
+    creadoEn: '2026-09-15',
+  },
+];
 
 export const INITIAL_CONFIG: BusinessConfig = {
   nombreNegocio: 'Pulpería La Bendición',
@@ -15,11 +69,19 @@ export const INITIAL_CONFIG: BusinessConfig = {
 
 export const INITIAL_USERS: UserProfile[] = [
   {
+    id: 'u-superadmin',
+    nombre: 'Super Admin',
+    apellido: '(Vendor SaaS)',
+    rol: 'superadmin',
+    pin: '9999',
+  },
+  {
     id: 'u-1',
     nombre: 'Don Manuel',
     apellido: 'González',
     rol: 'propietario',
     sucursalId: 'suc-1',
+    negocioId: 'tenant-1',
     pin: '1234',
   },
   {
@@ -28,6 +90,7 @@ export const INITIAL_USERS: UserProfile[] = [
     apellido: 'Martínez',
     rol: 'cajero',
     sucursalId: 'suc-1',
+    negocioId: 'tenant-1',
     pin: '2222',
   },
   {
@@ -36,6 +99,7 @@ export const INITIAL_USERS: UserProfile[] = [
     apellido: 'Rivas',
     rol: 'bodeguero',
     sucursalId: 'suc-1',
+    negocioId: 'tenant-1',
     pin: '3333',
   },
   {
@@ -44,6 +108,7 @@ export const INITIAL_USERS: UserProfile[] = [
     apellido: 'Contador',
     rol: 'contador',
     sucursalId: 'suc-1',
+    negocioId: 'tenant-1',
     pin: '4444',
   }
 ];
