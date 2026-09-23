@@ -149,7 +149,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : INITIAL_TENANTS;
   });
   const [currentTenantId, setCurrentTenantId] = useState<string>(() => {
-    return localStorage.getItem('pulperia_active_tenant_id') || INITIAL_TENANTS[0].id;
+    const saved = localStorage.getItem('pulperia_active_tenant_id');
+    if (saved === 'tenant-1') return '11111111-1111-1111-1111-111111111111';
+    return saved || INITIAL_TENANTS[0].id;
   });
 
   const currentTenant = tenants.find(t => t.id === currentTenantId) || tenants[0];
@@ -584,10 +586,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // 1. Guardar en Supabase si está configurado
       if (isSupabaseConfigured()) {
-        const insertResult = await insertLiveSale(newSale, currentTenantId);
+        const sucursalId = currentUser.sucursalId;
+        const aperturaCajaId = cashRegister.aperturaActual?.id;
+
+        console.log('[AppContext] Enviando venta a Supabase con parámetros:', {
+          ticket: newSale.numeroTicket,
+          total: newSale.total,
+          currentTenantId,
+          sucursalId,
+          aperturaCajaId,
+          cajeroId: currentUser.id,
+        });
+
+        const insertResult = await insertLiveSale(
+          newSale,
+          currentTenantId,
+          sucursalId,
+          aperturaCajaId
+        );
+
+        console.log('[AppContext] Respuesta recibida de Supabase insertLiveSale:', insertResult);
+
+        // MANEJO ESTRICTO DE ERRORES: Si la inserción en Supabase falla, abortar de inmediato.
+        // No limpiar el carrito ni simular éxito en el POS.
         if (!insertResult.success) {
-          console.warn('Aviso: Venta respaldada localmente (Supabase:', insertResult.error, ')');
-        } else if (insertResult.saleId) {
+          soundManager.playError();
+          setIsProcessingSale(false);
+          return {
+            success: false,
+            error: insertResult.error || 'Error al guardar la venta en Supabase.',
+          };
+        }
+
+        if (insertResult.saleId) {
           newSale.id = insertResult.saleId;
         }
       }
@@ -719,7 +750,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     soundManager.playTouchClick();
     const movement: CashMovement = {
       id: `mov-${Date.now()}`,
-      aperturaId: cashRegister.aperturaActual?.id || 'aper-01',
+      aperturaId: cashRegister.aperturaActual?.id || 'ap000000-0000-0000-0000-000000000001',
       tipo,
       monto,
       motivo,
@@ -773,7 +804,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const report: CashClosingReport = {
       id: `close-${Date.now()}`,
-      aperturaId: cashRegister.aperturaActual?.id || 'aper-01',
+      aperturaId: cashRegister.aperturaActual?.id || 'ap000000-0000-0000-0000-000000000001',
       cajeroNombre: currentUser.nombre,
       fechaCierre: new Date().toISOString(),
       montoInicial: fondoInicial,
@@ -800,12 +831,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openCashRegister = (montoInicial: number) => {
     soundManager.playTouchClick();
     setCashRegister({
-      id: 'caja-1',
+      id: '11111111-1111-1111-1111-111111111115',
       nombre: 'Caja Principal (Mostrador)',
       codigo: 'CAJA-01',
       estado: 'abierta',
       aperturaActual: {
-        id: `aper-${Date.now()}`,
+        id: 'ap000000-0000-0000-0000-000000000001',
         usuarioId: currentUser.id,
         usuarioNombre: `${currentUser.nombre} ${currentUser.apellido}`,
         fechaApertura: new Date().toISOString(),

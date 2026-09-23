@@ -2,7 +2,7 @@ import { Category, Product, Customer, UserProfile, CashRegister, BusinessConfig,
 
 export const INITIAL_TENANTS: SaaSTenant[] = [
   {
-    id: 'tenant-1',
+    id: '11111111-1111-1111-1111-111111111111',
     nombre: 'Pulpería La Bendición',
     nombreComercial: 'Minimarket & Pulpería La Bendición',
     propietarioNombre: 'Don Manuel González',
@@ -19,7 +19,7 @@ export const INITIAL_TENANTS: SaaSTenant[] = [
     creadoEn: '2026-01-10',
   },
   {
-    id: 'tenant-2',
+    id: '22222222-2222-2222-2222-222222222221',
     nombre: 'Minimarket El Ahorro',
     nombreComercial: 'El Ahorro Express',
     propietarioNombre: 'Carlos Morales',
@@ -36,7 +36,7 @@ export const INITIAL_TENANTS: SaaSTenant[] = [
     creadoEn: '2026-02-15',
   },
   {
-    id: 'tenant-3',
+    id: '33333333-3333-3333-3333-333333333331',
     nombre: 'Abarrotes Doña Julia',
     nombreComercial: 'Tienda Doña Julia',
     propietarioNombre: 'Julia Mendoza',
@@ -69,28 +69,28 @@ export const INITIAL_CONFIG: BusinessConfig = {
 
 export const INITIAL_USERS: UserProfile[] = [
   {
-    id: 'u-superadmin',
+    id: 'u0000000-0000-0000-0000-000000000001',
     nombre: 'Super Admin',
     apellido: '(Vendor SaaS)',
     rol: 'superadmin',
     pin: '9999',
   },
   {
-    id: 'u-1',
+    id: 'u0000000-0000-0000-0000-000000000002',
     nombre: 'Don Manuel',
     apellido: 'González',
     rol: 'propietario',
-    sucursalId: 'suc-1',
-    negocioId: 'tenant-1',
+    sucursalId: '11111111-1111-1111-1111-111111111112',
+    negocioId: '11111111-1111-1111-1111-111111111111',
     pin: '1234',
   },
   {
-    id: 'u-2',
+    id: 'u0000000-0000-0000-0000-000000000003',
     nombre: 'Rosa',
     apellido: 'Martínez',
     rol: 'cajero',
-    sucursalId: 'suc-1',
-    negocioId: 'tenant-1',
+    sucursalId: '11111111-1111-1111-1111-111111111112',
+    negocioId: '11111111-1111-1111-1111-111111111111',
     pin: '2222',
   },
   {
@@ -98,8 +98,8 @@ export const INITIAL_USERS: UserProfile[] = [
     nombre: 'Carlos',
     apellido: 'Rivas',
     rol: 'bodeguero',
-    sucursalId: 'suc-1',
-    negocioId: 'tenant-1',
+    sucursalId: '11111111-1111-1111-1111-111111111112',
+    negocioId: '11111111-1111-1111-1111-111111111111',
     pin: '3333',
   },
   {
@@ -107,8 +107,8 @@ export const INITIAL_USERS: UserProfile[] = [
     nombre: 'Lic. Morales',
     apellido: 'Contador',
     rol: 'contador',
-    sucursalId: 'suc-1',
-    negocioId: 'tenant-1',
+    sucursalId: '11111111-1111-1111-1111-111111111112',
+    negocioId: '11111111-1111-1111-1111-111111111111',
     pin: '4444',
   }
 ];
@@ -497,13 +497,13 @@ export const INITIAL_CUSTOMERS: Customer[] = [
 ];
 
 export const INITIAL_REGISTER: CashRegister = {
-  id: 'caja-1',
+  id: '11111111-1111-1111-1111-111111111115',
   nombre: 'Caja Principal (Mostrador 1)',
   codigo: 'CAJA-01',
   estado: 'abierta',
   aperturaActual: {
-    id: 'aper-01',
-    usuarioId: 'u-2',
+    id: 'ap000000-0000-0000-0000-000000000001',
+    usuarioId: 'u0000000-0000-0000-0000-000000000003',
     usuarioNombre: 'Rosa Martínez (Cajera)',
     fechaApertura: new Date().toISOString(),
     montoInicial: 1000.00, // C$ 1,000 en fondo de cambio

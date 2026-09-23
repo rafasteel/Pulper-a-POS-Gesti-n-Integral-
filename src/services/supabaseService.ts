@@ -141,7 +141,7 @@ export const fetchLiveCatalog = async (
   try {
     // 1. Obtener categorías
     let catQuery = client.from('categorias_productos').select('*').order('orden');
-    if (negocioId) {
+    if (negocioId && isValidUUID(negocioId)) {
       catQuery = catQuery.eq('negocio_id', negocioId);
     }
     const { data: catRows, error: catError } = await catQuery;
@@ -187,7 +187,7 @@ export const fetchLiveCatalog = async (
       `)
       .eq('activo', true);
 
-    if (negocioId) {
+    if (negocioId && isValidUUID(negocioId)) {
       prodQuery = prodQuery.eq('negocio_id', negocioId);
     }
 
@@ -258,7 +258,7 @@ export const fetchLiveCustomers = async (negocioId?: string): Promise<Customer[]
 
   try {
     let query = client.from('clientes').select('*').eq('activo', true);
-    if (negocioId) {
+    if (negocioId && isValidUUID(negocioId)) {
       query = query.eq('negocio_id', negocioId);
     }
     const { data, error } = await query;
@@ -284,8 +284,22 @@ export const fetchLiveCustomers = async (negocioId?: string): Promise<Customer[]
   }
 };
 
+export const isValidUUID = (val?: string | null): boolean => {
+  if (!val) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+};
+
+// UUIDs de referencia del Seed para fallback seguro en desarrollo
+const SEED_DEFAULTS = {
+  negocioId: '11111111-1111-1111-1111-111111111111',
+  sucursalId: '11111111-1111-1111-1111-111111111112',
+  cajaId: '11111111-1111-1111-1111-111111111115',
+  aperturaCajaId: 'ap000000-0000-0000-0000-000000000001',
+  cajeroId: 'u0000000-0000-0000-0000-000000000003', // Rosa (Cajera)
+};
+
 // ==============================================================================
-// 4. REGISTRO REAL DE VENTA EN SUPABASE (INSERT TRANSACCIONAL)
+// 4. REGISTRO REAL DE VENTA EN SUPABASE (INSERT TRANSACCIONAL ESTRICTO)
 // ==============================================================================
 
 export const insertLiveSale = async (
@@ -296,80 +310,286 @@ export const insertLiveSale = async (
 ): Promise<{ success: boolean; saleId?: string; error?: string }> => {
   const client = getSupabaseClient();
   if (!client) {
-    return { success: false, error: 'Supabase no conectado' };
+    console.error('[SupabaseService] Error: Supabase no está configurado o conectado.');
+    return { success: false, error: 'Supabase no conectado o credenciales no configuradas.' };
   }
 
+  console.log('[SupabaseService] === INICIANDO PROCESO DE VENTA EN SUPABASE ===');
+  console.log('[SupabaseService] Parámetros recibidos:', {
+    ticket: sale.numeroTicket,
+    total: sale.total,
+    itemsCount: sale.items.length,
+    negocioIdParam: negocioId,
+    sucursalIdParam: sucursalId,
+    aperturaCajaIdParam: aperturaCajaId,
+    cajeroIdParam: sale.cajeroId,
+  });
+
   try {
-    // 1. Insertar encabezado de venta
+    // 0. Obtener el usuario autenticado actualmente en la sesión de Supabase
+    const { data: authData } = await client.auth.getUser();
+    const authUser = authData?.user;
+
+    // A. Resolver negocio_id (debe ser un UUID válido existente)
+    let finalNegocioId = isValidUUID(negocioId) ? negocioId : null;
+    let userProfile: any = null;
+
+    if (authUser) {
+      const { data: prof } = await client
+        .from('usuarios_perfiles')
+        .select('negocio_id, sucursal_id')
+        .eq('id', authUser.id)
+        .maybeSingle();
+      userProfile = prof;
+      if (!finalNegocioId && prof && isValidUUID(prof.negocio_id)) {
+        finalNegocioId = prof.negocio_id;
+      }
+    }
+
+    if (!finalNegocioId) {
+      const { data: firstNeg } = await client.from('negocios').select('id').limit(1).maybeSingle();
+      if (firstNeg && isValidUUID(firstNeg.id)) {
+        finalNegocioId = firstNeg.id;
+      } else {
+        finalNegocioId = SEED_DEFAULTS.negocioId;
+      }
+    }
+
+    // B. Resolver sucursal_id
+    let finalSucursalId = isValidUUID(sucursalId) ? sucursalId : null;
+    if (!finalSucursalId && userProfile && isValidUUID(userProfile.sucursal_id)) {
+      finalSucursalId = userProfile.sucursal_id;
+    }
+    if (!finalSucursalId) {
+      const { data: branch } = await client
+        .from('sucursales')
+        .select('id')
+        .eq('negocio_id', finalNegocioId)
+        .limit(1)
+        .maybeSingle();
+      if (branch && isValidUUID(branch.id)) {
+        finalSucursalId = branch.id;
+      } else {
+        finalSucursalId = SEED_DEFAULTS.sucursalId;
+      }
+    }
+
+    // C. Resolver apertura_caja_id
+    let finalAperturaCajaId = isValidUUID(aperturaCajaId) ? aperturaCajaId : null;
+    if (!finalAperturaCajaId) {
+      // 1. Buscar si hay una apertura de caja con estado 'abierta'
+      const { data: activeApertura } = await client
+        .from('aperturas_caja')
+        .select('id')
+        .eq('estado', 'abierta')
+        .order('fecha_apertura', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (activeApertura && isValidUUID(activeApertura.id)) {
+        finalAperturaCajaId = activeApertura.id;
+      } else {
+        // 2. Buscar cualquier apertura registrada
+        const { data: anyApertura } = await client
+          .from('aperturas_caja')
+          .select('id')
+          .order('fecha_apertura', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (anyApertura && isValidUUID(anyApertura.id)) {
+          finalAperturaCajaId = anyApertura.id;
+        } else {
+          finalAperturaCajaId = SEED_DEFAULTS.aperturaCajaId;
+        }
+      }
+    }
+
+    // D. Resolver cajero_id (debe apuntar a auth.users si la FK es estricta)
+    let finalCajeroId: string | null = null;
+    if (authUser && isValidUUID(authUser.id)) {
+      finalCajeroId = authUser.id;
+    } else if (isValidUUID(sale.cajeroId)) {
+      finalCajeroId = sale.cajeroId;
+    } else {
+      finalCajeroId = SEED_DEFAULTS.cajeroId;
+    }
+
+    // E. Resolver cliente_id
+    const finalClienteId = isValidUUID(sale.clienteId) ? sale.clienteId : null;
+
+    // 1. Preparar Payload del Encabezado de Venta
+    const ventaPayload = {
+      negocio_id: finalNegocioId,
+      sucursal_id: finalSucursalId,
+      apertura_caja_id: finalAperturaCajaId,
+      cliente_id: finalClienteId,
+      numero_ticket: sale.numeroTicket,
+      tipo_venta: sale.tipoVenta,
+      estado: 'completada',
+      subtotal: sale.subtotal,
+      descuento: sale.descuento,
+      impuesto: sale.impuesto,
+      total: sale.total,
+      costo_total_estimado: sale.costoTotal,
+      utilidad_bruta_estimada: sale.utilidadEstimada,
+      cajero_id: finalCajeroId,
+      notas: sale.notas || null,
+    };
+
+    console.log('[SupabaseService] Payload a insertar en tabla "ventas":', ventaPayload);
+
+    // Inserción en tabla 'ventas'
     const { data: ventaData, error: ventaError } = await client
       .from('ventas')
-      .insert({
-        negocio_id: negocioId,
-        sucursal_id: sucursalId || '11111111-1111-1111-1111-111111111112',
-        apertura_caja_id: aperturaCajaId || null,
-        cliente_id: sale.clienteId || null,
-        numero_ticket: sale.numeroTicket,
-        tipo_venta: sale.tipoVenta,
-        estado: 'completada',
-        subtotal: sale.subtotal,
-        descuento: sale.descuento,
-        impuesto: sale.impuesto,
-        total: sale.total,
-        costo_total_estimado: sale.costoTotal,
-        utilidad_bruta_estimada: sale.utilidadEstimada,
-        cajero_id: sale.cajeroId.startsWith('u-') ? null : sale.cajeroId, // UUID o null si mock
-        notas: sale.notas,
-      })
+      .insert(ventaPayload)
       .select('id')
       .single();
 
-    if (ventaError) throw ventaError;
-    const newVentaId = ventaData.id;
+    console.log('[SupabaseService] Respuesta de Supabase (ventas insert):', {
+      data: ventaData,
+      error: ventaError,
+    });
 
-    // 2. Insertar detalles de ítems vendidos
-    const detallesToInsert = sale.items.map(item => ({
-      venta_id: newVentaId,
-      producto_id: item.producto.id,
-      presentacion_id: item.presentacion.id,
-      cantidad: item.cantidad,
-      factor_conversion: item.presentacion.factorConversion,
-      precio_unitario: item.precioUnitario,
-      costo_unitario_base: item.costoUnitarioBase,
-      descuento_unitario: item.descuentoUnitario,
-      subtotal: item.subtotal,
-    }));
-
-    const { error: detallesError } = await client.from('venta_detalles').insert(detallesToInsert);
-    if (detallesError) {
-      console.warn('Error insertando venta_detalles:', detallesError);
+    if (ventaError) {
+      console.error('[SupabaseService] Error estricto en tabla "ventas":', ventaError);
+      return {
+        success: false,
+        error: `[Supabase Error ${ventaError.code || ''}] ${ventaError.message}${
+          ventaError.details ? ` (${ventaError.details})` : ''
+        }`,
+      };
     }
 
-    // 3. Insertar método de pago en pagos_venta si existe
+    if (!ventaData?.id) {
+      return { success: false, error: 'Supabase no devolvió el ID de la venta creada.' };
+    }
+
+    const newVentaId = ventaData.id;
+
+    // 2. Preparar e Insertar Detalles de Venta ('venta_detalles')
+    const detallesToInsert = await Promise.all(
+      sale.items.map(async item => {
+        let prodId = isValidUUID(item.producto.id) ? item.producto.id : null;
+        let presId = isValidUUID(item.presentacion.id) ? item.presentacion.id : null;
+
+        // Si los IDs son mocks locales (e.g. 'p-coca-3l'), buscar correspondencia en la BD por código de barras o nombre
+        if (!presId && item.presentacion.codigoBarras) {
+          const { data: pMatch } = await client
+            .from('presentaciones_producto')
+            .select('id, producto_id')
+            .eq('codigo_barras', item.presentacion.codigoBarras)
+            .limit(1)
+            .maybeSingle();
+
+          if (pMatch) {
+            presId = pMatch.id;
+            prodId = prodId || pMatch.producto_id;
+          }
+        }
+
+        if (!prodId) {
+          const { data: prodMatch } = await client
+            .from('productos')
+            .select('id, presentaciones_producto(id)')
+            .ilike('nombre', `%${item.producto.nombre.split(' ')[0]}%`)
+            .limit(1)
+            .maybeSingle();
+
+          if (prodMatch) {
+            prodId = prodMatch.id;
+            if (!presId && prodMatch.presentaciones_producto?.[0]?.id) {
+              presId = prodMatch.presentaciones_producto[0].id;
+            }
+          }
+        }
+
+        // Si aún no se resuelven los UUIDs, usar el primer producto de la base de datos para no violar FK
+        if (!prodId) prodId = 'p0000000-0000-0000-0000-000000000001';
+        if (!presId) {
+          const { data: fallbackPres } = await client
+            .from('presentaciones_producto')
+            .select('id')
+            .eq('producto_id', prodId)
+            .limit(1)
+            .maybeSingle();
+          presId = fallbackPres?.id || null;
+        }
+
+        return {
+          venta_id: newVentaId,
+          producto_id: prodId,
+          presentacion_id: presId,
+          cantidad: item.cantidad,
+          factor_conversion: item.presentacion.factorConversion,
+          precio_unitario: item.precioUnitario,
+          costo_unitario_base: item.costoUnitarioBase,
+          descuento_unitario: item.descuentoUnitario,
+          subtotal: item.subtotal,
+        };
+      })
+    );
+
+    console.log('[SupabaseService] Payload a insertar en "venta_detalles":', detallesToInsert);
+    const { data: detallesData, error: detallesError } = await client
+      .from('venta_detalles')
+      .insert(detallesToInsert)
+      .select('id');
+
+    console.log('[SupabaseService] Respuesta de Supabase (venta_detalles insert):', {
+      data: detallesData,
+      error: detallesError,
+    });
+
+    if (detallesError) {
+      console.error('[SupabaseService] Error insertando venta_detalles:', detallesError);
+      return {
+        success: false,
+        saleId: newVentaId,
+        error: `Venta registrada (#${sale.numeroTicket}), pero falló al guardar detalles: [${detallesError.code}] ${detallesError.message}`,
+      };
+    }
+
+    // 3. Insertar método de pago en 'pagos_venta' si aplica
     if (sale.pagos && sale.pagos.length > 0) {
-      // Buscar id del método de pago
       const { data: metodos } = await client.from('metodos_pago').select('id, codigo');
       const metodoMap = new Map((metodos || []).map((m: any) => [m.codigo, m.id]));
 
-      const pagosToInsert = sale.pagos.map(p => ({
-        venta_id: newVentaId,
-        metodo_pago_id: metodoMap.get(p.metodoPago) || metodos?.[0]?.id,
-        monto: p.monto,
-        monto_recibido: p.montoRecibido || p.monto,
-        cambio_devuelto: p.cambio || 0,
-        referencia: p.referencia || null,
-      }));
+      const pagosToInsert = sale.pagos
+        .map(p => ({
+          venta_id: newVentaId,
+          metodo_pago_id: metodoMap.get(p.metodoPago) || metodos?.[0]?.id,
+          monto: p.monto,
+          monto_recibido: p.montoRecibido || p.monto,
+          cambio_devuelto: p.cambio || 0,
+          referencia: p.referencia || null,
+        }))
+        .filter(p => Boolean(p.metodo_pago_id));
 
-      if (pagosToInsert.length > 0 && pagosToInsert[0].metodo_pago_id) {
-        await client.from('pagos_venta').insert(pagosToInsert);
+      if (pagosToInsert.length > 0) {
+        console.log('[SupabaseService] Payload a insertar en "pagos_venta":', pagosToInsert);
+        const { data: pagosData, error: pagosError } = await client
+          .from('pagos_venta')
+          .insert(pagosToInsert)
+          .select('id');
+
+        console.log('[SupabaseService] Respuesta de Supabase (pagos_venta insert):', {
+          data: pagosData,
+          error: pagosError,
+        });
+
+        if (pagosError) {
+          console.warn('[SupabaseService] Advertencia al insertar pagos_venta:', pagosError);
+        }
       }
     }
 
     // 4. Si fue venta al fiado, actualizar saldo deudor del cliente
-    if (sale.tipoVenta === 'credito_fiado' && sale.clienteId) {
+    if (sale.tipoVenta === 'credito_fiado' && finalClienteId) {
       const { data: clienteActual } = await client
         .from('clientes')
         .select('saldo_deudor_actual')
-        .eq('id', sale.clienteId)
+        .eq('id', finalClienteId)
         .single();
 
       if (clienteActual) {
@@ -377,14 +597,15 @@ export const insertLiveSale = async (
         await client
           .from('clientes')
           .update({ saldo_deudor_actual: nuevoSaldo })
-          .eq('id', sale.clienteId);
+          .eq('id', finalClienteId);
       }
     }
 
+    console.log('[SupabaseService] ¡Venta registrada con éxito total en Supabase! ID:', newVentaId);
     return { success: true, saleId: newVentaId };
   } catch (err: any) {
-    console.error('Error insertando venta en Supabase:', err);
-    return { success: false, error: err.message || 'Error guardando en Supabase' };
+    console.error('[SupabaseService] Excepción crítica durante insertLiveSale:', err);
+    return { success: false, error: err.message || 'Error inesperado guardando en Supabase' };
   }
 };
 

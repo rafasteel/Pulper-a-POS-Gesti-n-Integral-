@@ -30,6 +30,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose }) =
   const [reference, setReference] = useState<string>('');
   const [completedSaleTicket, setCompletedSaleTicket] = useState<any | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -44,14 +45,25 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose }) =
   const handleConfirmPayment = async () => {
     if (isSubmitting || isProcessingSale) return;
 
+    setErrorMessage(null);
+
     if (paymentMethod === 'efectivo' && numCashReceived < total) {
       soundManager.playError();
-      alert(`El monto recibido (${config.monedaSimbolo}${numCashReceived}) es menor al total (${config.monedaSimbolo}${total})`);
+      setErrorMessage(
+        `El monto recibido (${config.monedaSimbolo}${numCashReceived}) es menor al total (${config.monedaSimbolo}${total})`
+      );
       return;
     }
 
     setIsSubmitting(true);
     try {
+      console.log('[PaymentModal] Iniciando cobro de venta:', {
+        metodo: paymentMethod,
+        montoRecibido: paymentMethod === 'efectivo' ? numCashReceived : total,
+        total,
+        cliente: selectedCustomer?.nombre,
+      });
+
       const result = await completeSale({
         metodo: paymentMethod,
         montoRecibido: paymentMethod === 'efectivo' ? numCashReceived : total,
@@ -59,11 +71,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose }) =
         referencia: reference || undefined,
       });
 
+      console.log('[PaymentModal] Respuesta de completeSale en frontend:', result);
+
       if (result.success && result.sale) {
         setCompletedSaleTicket(result.sale);
       } else {
-        alert(result.error || 'Error al procesar la venta');
+        soundManager.playError();
+        setErrorMessage(result.error || 'Error al procesar la venta en Supabase');
       }
+    } catch (err: any) {
+      soundManager.playError();
+      console.error('[PaymentModal] Excepción no controlada en cobro:', err);
+      setErrorMessage(err.message || 'Error inesperado durante el procesamiento de la venta');
     } finally {
       setIsSubmitting(false);
     }
@@ -71,6 +90,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose }) =
 
   const handleCloseAll = () => {
     setCompletedSaleTicket(null);
+    setErrorMessage(null);
     onClose();
   };
 
@@ -369,6 +389,36 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose }) =
                   onChange={e => setReference(e.target.value)}
                   className="w-full h-10 px-3 bg-slate-900 border border-slate-700 rounded-xl text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
                 />
+              </div>
+            )}
+
+            {/* Alerta Visual Roja de Error Estricto (Supabase / Validación) */}
+            {errorMessage && (
+              <div className="p-3.5 bg-rose-950/80 border-2 border-rose-500/70 rounded-xl text-rose-200 text-xs flex flex-col gap-2 animate-in fade-in zoom-in-95 shadow-lg shadow-rose-950/50">
+                <div className="flex items-start gap-2.5">
+                  <div className="p-1 rounded-lg bg-rose-500/20 text-rose-400 shrink-0 mt-0.5">
+                    <AlertTriangle className="w-5 h-5 text-rose-400" />
+                  </div>
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="flex items-center justify-between font-bold text-rose-300">
+                      <span className="text-xs uppercase tracking-wide">Error al Registrar Venta en Supabase</span>
+                      <button
+                        type="button"
+                        onClick={() => setErrorMessage(null)}
+                        className="text-slate-400 hover:text-white p-0.5 rounded transition"
+                        title="Descartar alerta"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="p-2.5 bg-slate-950/90 rounded-lg border border-rose-500/30 text-[11px] font-mono text-rose-300 break-words leading-relaxed select-text">
+                      {errorMessage}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[10px] text-rose-400/90 font-medium">
+                      <span>⚠️ El carrito NO ha sido limpiado. La transacción no se completó en Supabase.</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
