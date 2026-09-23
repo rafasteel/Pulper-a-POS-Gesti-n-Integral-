@@ -14,7 +14,9 @@ import {
   Lock, 
   Unlock, 
   TrendingUp, 
-  AlertOctagon 
+  AlertOctagon,
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { SaaSTenant, SubscriptionPlan, SubscriptionStatus } from '../types';
@@ -36,6 +38,8 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBackToPOS }) =
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'todos' | SubscriptionStatus>('todos');
   const [showNewTenantModal, setShowNewTenantModal] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Formulario nuevo cliente
   const [formData, setFormData] = useState({
@@ -74,44 +78,81 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBackToPOS }) =
     return matchesSearch && matchesStatus;
   });
 
-  const handleCreateTenant = (e: React.FormEvent) => {
+  const handleCreateTenant = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.nombre.trim()) return;
 
-    const fechaVence = new Date();
-    fechaVence.setDate(fechaVence.getDate() + 30);
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const fechaVence = new Date();
+      fechaVence.setDate(fechaVence.getDate() + 30);
 
-    addNewTenant({
-      nombre: formData.nombre,
-      subdominio: formData.subdominio || formData.nombre.toLowerCase().replace(/\s+/g, '-'),
-      propietarioNombre: formData.propietarioNombre,
-      email: formData.email,
-      telefono: formData.telefono,
-      plan: formData.plan,
-      precioMensual: formData.precioMensual,
-      estadoSuscripcion: formData.estadoSuscripcion,
-      fechaVencimiento: fechaVence.toISOString().split('T')[0],
-      limiteSucursales: formData.limiteSucursales,
-      limiteUsuarios: formData.limiteUsuarios,
-    });
+      const res = await addNewTenant({
+        nombre: formData.nombre,
+        subdominio: formData.subdominio || formData.nombre.toLowerCase().replace(/\s+/g, '-'),
+        propietarioNombre: formData.propietarioNombre,
+        email: formData.email,
+        telefono: formData.telefono,
+        plan: formData.plan,
+        precioMensual: formData.precioMensual,
+        estadoSuscripcion: formData.estadoSuscripcion,
+        fechaVencimiento: fechaVence.toISOString().split('T')[0],
+        limiteSucursales: formData.limiteSucursales,
+        limiteUsuarios: formData.limiteUsuarios,
+      });
 
-    setShowNewTenantModal(false);
-    setFormData({
-      nombre: '',
-      subdominio: '',
-      propietarioNombre: '',
-      email: '',
-      telefono: '',
-      plan: 'pro',
-      precioMensual: 29,
-      estadoSuscripcion: 'activa',
-      limiteSucursales: 1,
-      limiteUsuarios: 5,
-    });
+      if (!res.success) {
+        setErrorMessage(res.error || 'Error al registrar la pulpería en Supabase');
+        return;
+      }
+
+      setShowNewTenantModal(false);
+      setFormData({
+        nombre: '',
+        subdominio: '',
+        propietarioNombre: '',
+        email: '',
+        telefono: '',
+        plan: 'pro',
+        precioMensual: 29,
+        estadoSuscripcion: 'activa',
+        limiteSucursales: 1,
+        limiteUsuarios: 5,
+      });
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error inesperado al conectar con Supabase');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleToggleStatus = async (id: string, newStatus: SubscriptionStatus) => {
+    setErrorMessage(null);
+    try {
+      const res = await toggleTenantSubscription(id, newStatus);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Error al actualizar el estado en Supabase');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error inesperado al conectar con Supabase');
+    }
+  };
+
+  const handleUpdatePlan = async (id: string, plan: SubscriptionPlan) => {
+    setErrorMessage(null);
+    try {
+      const res = await updateTenantPlan(id, plan);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Error al actualizar el plan en Supabase');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error inesperado al conectar con Supabase');
+    }
   };
 
   const extendSubscription30Days = (tenant: SaaSTenant) => {
-    toggleTenantSubscription(tenant.id, 'activa');
+    handleToggleStatus(tenant.id, 'activa');
   };
 
   return (
@@ -161,6 +202,22 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBackToPOS }) =
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         
+        {/* Alerta de Error Supabase Global */}
+        {errorMessage && (
+          <div className="p-3.5 bg-rose-950/80 border-2 border-rose-500/70 rounded-xl flex items-start gap-2.5 text-rose-200 text-xs animate-shake shadow-lg shadow-rose-950/40">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-bold">Rechazo de Supabase / Base de Datos:</span> {errorMessage}
+            </div>
+            <button 
+              onClick={() => setErrorMessage(null)} 
+              className="text-rose-400 hover:text-rose-200 text-sm font-bold ml-2"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* KPI Metrics Grid */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           {/* Card: MRR */}
@@ -354,8 +411,9 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBackToPOS }) =
                       <td className="py-4 px-4">
                         <select
                           value={tenant.plan}
-                          onChange={(e) => updateTenantPlan(tenant.id, e.target.value as SubscriptionPlan)}
-                          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white capitalize focus:outline-none focus:border-indigo-500"
+                          disabled={isSubmitting}
+                          onChange={(e) => handleUpdatePlan(tenant.id, e.target.value as SubscriptionPlan)}
+                          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white capitalize focus:outline-none focus:border-indigo-500 disabled:opacity-50"
                         >
                           <option value="basico">Básico ($15/m)</option>
                           <option value="pro">Pro ($29/m)</option>
@@ -378,8 +436,9 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBackToPOS }) =
                         </div>
                         <button
                           type="button"
+                          disabled={isSubmitting}
                           onClick={() => extendSubscription30Days(tenant)}
-                          className="text-[10px] text-indigo-400 hover:text-indigo-300 underline mt-0.5 block"
+                          className="text-[10px] text-indigo-400 hover:text-indigo-300 underline mt-0.5 block disabled:opacity-50"
                         >
                           + Extender 30 días
                         </button>
@@ -409,8 +468,9 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBackToPOS }) =
                         {isSuspended ? (
                           <button
                             type="button"
-                            onClick={() => toggleTenantSubscription(tenant.id, 'activa')}
-                            className="px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-all hover:scale-105"
+                            disabled={isSubmitting}
+                            onClick={() => handleToggleStatus(tenant.id, 'activa')}
+                            className="px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-all hover:scale-105 disabled:opacity-50"
                           >
                             <Unlock className="w-3.5 h-3.5" />
                             <span>Reactivar Acceso</span>
@@ -418,8 +478,9 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBackToPOS }) =
                         ) : (
                           <button
                             type="button"
-                            onClick={() => toggleTenantSubscription(tenant.id, 'suspendida')}
-                            className="px-3 py-1.5 bg-red-600/80 hover:bg-red-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-all hover:scale-105"
+                            disabled={isSubmitting}
+                            onClick={() => handleToggleStatus(tenant.id, 'suspendida')}
+                            className="px-3 py-1.5 bg-red-600/80 hover:bg-red-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-all hover:scale-105 disabled:opacity-50"
                           >
                             <Lock className="w-3.5 h-3.5" />
                             <span>Suspender (Mora)</span>
@@ -550,19 +611,41 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBackToPOS }) =
                 </div>
               </div>
 
+              {/* Alerta de Error Supabase en Modal */}
+              {errorMessage && (
+                <div className="p-3 bg-rose-950/80 border-2 border-rose-500/70 rounded-xl flex items-start gap-2.5 text-rose-200 text-xs animate-shake">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <span className="font-bold">Rechazo de Supabase / Base de Datos:</span> {errorMessage}
+                  </div>
+                </div>
+              )}
+
               <div className="pt-3 border-t border-slate-800 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowNewTenantModal(false)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setShowNewTenantModal(false);
+                    setErrorMessage(null);
+                  }}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-indigo-600/30"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-indigo-600/30 disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  Guardar y Habilitar Pulpería
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Guardando en Supabase...</span>
+                    </>
+                  ) : (
+                    <span>Guardar y Habilitar Pulpería</span>
+                  )}
                 </button>
               </div>
             </form>

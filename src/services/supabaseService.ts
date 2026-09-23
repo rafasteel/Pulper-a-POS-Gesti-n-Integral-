@@ -10,6 +10,11 @@ import {
   CashRegister,
   CashMovement,
   OperationalExpense,
+  KardexMovement,
+  Supplier,
+  Purchase,
+  SubscriptionStatus,
+  SubscriptionPlan,
 } from '../types';
 
 let supabaseInstance: SupabaseClient | null = null;
@@ -235,19 +240,7 @@ export const fetchLiveCatalog = async (
         perecedero: Boolean(p.perecedero),
         fechaVencimientoProxima: p.fecha_vencimiento_proxima,
         imagenUrl: p.imagen_url,
-        presentaciones: presentaciones.length > 0 ? presentaciones : [
-          {
-            id: `pres-${p.id}`,
-            productoId: p.id,
-            nombre: 'Unidad',
-            factorConversion: 1,
-            codigoBarras: '',
-            precioCosto: 0,
-            precioVenta: 10,
-            esPresentacionBase: true,
-            activo: true,
-          },
-        ],
+        presentaciones: presentaciones,
         existenciaBase: Number(stockExistencia),
       };
     });
@@ -1192,5 +1185,849 @@ export const emitBarcodeFromMobile = async (cajaToken: string, barcode: string) 
   if ('BroadcastChannel' in window) {
     const localChannel = new BroadcastChannel(channelName);
     localChannel.postMessage({ barcode, timestamp: Date.now() });
+  }
+};
+
+// ==============================================================================
+// 6. CATÁLOGO, PRESENTACIONES E INVENTARIO EN VIVO (INSERT, UPDATE, DELETE)
+// ==============================================================================
+
+export const insertLiveProduct = async (
+  productData: {
+    nombre: string;
+    categoriaId?: string;
+    unidadMedidaBase?: string;
+    codigoBarras?: string;
+    precioCosto: number;
+    precioVenta: number;
+    stockInicial: number;
+    permiteDecimales?: boolean;
+    esFavorito?: boolean;
+    stockMinimo?: number;
+    stockMaximo?: number;
+  },
+  negocioId: string,
+  sucursalId?: string
+): Promise<{ success: boolean; product?: Product; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no está conectado.' };
+
+  try {
+    let finalNegocioId = isValidUUID(negocioId) ? negocioId : null;
+    if (!finalNegocioId) {
+      const { data: firstNeg } = await client.from('negocios').select('id').limit(1).maybeSingle();
+      if (firstNeg && isValidUUID(firstNeg.id)) {
+        finalNegocioId = firstNeg.id;
+      }
+    }
+
+    if (!finalNegocioId) {
+      return { success: false, error: 'No se encontró un Negocio válido en Supabase para asociar el producto.' };
+    }
+
+    let finalSucursalId = isValidUUID(sucursalId) ? sucursalId : null;
+    if (!finalSucursalId) {
+      const { data: firstSuc } = await client.from('sucursales').select('id').eq('negocio_id', finalNegocioId).limit(1).maybeSingle();
+      if (firstSuc && isValidUUID(firstSuc.id)) {
+        finalSucursalId = firstSuc.id;
+      }
+    }
+
+    // 1. Insertar Producto en tabla 'productos'
+    const prodPayload = {
+      negocio_id: finalNegocioId,
+      categoria_id: isValidUUID(productData.categoriaId) ? productData.categoriaId : null,
+      nombre: productData.nombre.trim(),
+      unidad_medida_base: productData.unidadMedidaBase || 'unidad',
+      permite_decimales: productData.permiteDecimales ?? false,
+      es_favorito: productData.esFavorito ?? true,
+      stock_minimo: productData.stockMinimo ?? 5,
+      stock_maximo: productData.stockMaximo ?? 100,
+      perecedero: false,
+    };
+
+    console.log('[SupabaseService] Insertando producto live:', prodPayload);
+    const { data: prodRow, error: prodErr } = await client
+      .from('productos')
+      .insert(prodPayload)
+      .select()
+      .single();
+
+    if (prodErr || !prodRow) {
+      console.error('[SupabaseService] Error creando producto:', prodErr);
+      return { success: false, error: prodErr?.message || 'Error al guardar producto en Supabase' };
+    }
+
+    // 2. Insertar Presentación Base en 'presentaciones_producto'
+    const presPayload = {
+      producto_id: prodRow.id,
+      nombre: 'Unidad',
+      factor_conversion: 1.0,
+      codigo_barras: productData.codigoBarras?.trim() || null,
+      precio_costo: productData.precioCosto,
+      precio_venta: productData.precioVenta,
+      es_presentacion_base: true,
+      activo: true,
+    };
+
+    const { data: presRow, error: presErr } = await client
+      .from('presentaciones_producto')
+      .insert(presPayload)
+      .select()
+      .single();
+
+    if (presErr || !presRow) {
+      console.error('[SupabaseService] Error creando presentación base:', presErr);
+      return { success: false, error: presErr?.message || 'Error al crear presentación en Supabase' };
+    }
+
+    // 3. Crear fila de existencias si hay sucursal
+    if (finalSucursalId) {
+      const stockQty = productData.stockInicial || 0;
+      await client.from('existencias').upsert({
+        sucursal_id: finalSucursalId,
+        producto_id: prodRow.id,
+        cantidad_disponible: stockQty,
+      });
+
+      if (stockQty > 0) {
+        await client.from('movimientos_inventario').insert({
+          sucursal_id: finalSucursalId,
+          producto_id: prodRow.id,
+          tipo_movimiento: 'ajuste_positivo',
+          cantidad: stockQty,
+          costo_unitario: productData.precioCosto,
+          motivo: 'Inventario inicial al crear producto',
+        });
+      }
+    }
+
+    const createdProduct: Product = {
+      id: prodRow.id,
+      categoriaId: prodRow.categoria_id || '',
+      nombre: prodRow.nombre,
+      descripcion: prodRow.descripcion,
+      unidadMedidaBase: prodRow.unidad_medida_base,
+      permiteDecimales: Boolean(prodRow.permite_decimales),
+      esFavorito: Boolean(prodRow.es_favorito),
+      stockMinimo: Number(prodRow.stock_minimo),
+      stockMaximo: Number(prodRow.stock_maximo),
+      perecedero: Boolean(prodRow.perecedero),
+      existenciaBase: productData.stockInicial || 0,
+      presentaciones: [
+        {
+          id: presRow.id,
+          productoId: prodRow.id,
+          nombre: presRow.nombre,
+          factorConversion: Number(presRow.factor_conversion),
+          codigoBarras: presRow.codigo_barras || '',
+          precioCosto: Number(presRow.precio_costo),
+          precioVenta: Number(presRow.precio_venta),
+          esPresentacionBase: true,
+          activo: true,
+        },
+      ],
+    };
+
+    return { success: true, product: createdProduct };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error inesperado insertando producto' };
+  }
+};
+
+export const insertLivePresentation = async (
+  productoId: string,
+  data: {
+    nombre: string;
+    factorConversion: number;
+    codigoBarras?: string;
+    precioCosto: number;
+    precioVenta: number;
+  }
+): Promise<{ success: boolean; presentation?: ProductPresentation; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no conectado.' };
+
+  if (!isValidUUID(productoId)) {
+    return { success: false, error: 'ID de producto inválido para asociar presentación.' };
+  }
+
+  try {
+    const payload = {
+      producto_id: productoId,
+      nombre: data.nombre.trim(),
+      factor_conversion: data.factorConversion || 1.0,
+      codigo_barras: data.codigoBarras?.trim() || null,
+      precio_costo: data.precioCosto || 0,
+      precio_venta: data.precioVenta,
+      es_presentacion_base: false,
+      activo: true,
+    };
+
+    const { data: presRow, error } = await client
+      .from('presentaciones_producto')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    const createdPresentation: ProductPresentation = {
+      id: presRow.id,
+      productoId: presRow.producto_id,
+      nombre: presRow.nombre,
+      factorConversion: Number(presRow.factor_conversion),
+      codigoBarras: presRow.codigo_barras || '',
+      precioCosto: Number(presRow.precio_costo),
+      precioVenta: Number(presRow.precio_venta),
+      esPresentacionBase: Boolean(presRow.es_presentacion_base),
+      activo: Boolean(presRow.activo),
+    };
+
+    return { success: true, presentation: createdPresentation };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error inesperado insertando presentación' };
+  }
+};
+
+export const deleteLivePresentation = async (presId: string): Promise<{ success: boolean; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no conectado.' };
+
+  if (!isValidUUID(presId)) {
+    return { success: false, error: 'ID de presentación inválido.' };
+  }
+
+  try {
+    const { error } = await client.from('presentaciones_producto').delete().eq('id', presId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error eliminando presentación' };
+  }
+};
+
+export const updateLiveProduct = async (product: Product, sucursalId?: string): Promise<{ success: boolean; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no conectado.' };
+
+  if (!isValidUUID(product.id)) {
+    return { success: false, error: 'ID de producto no es un UUID válido.' };
+  }
+
+  try {
+    const { error: prodErr } = await client
+      .from('productos')
+      .update({
+        nombre: product.nombre,
+        unidad_medida_base: product.unidadMedidaBase,
+        permite_decimales: product.permiteDecimales,
+        es_favorito: product.esFavorito,
+        stock_minimo: product.stockMinimo,
+        stock_maximo: product.stockMaximo,
+      })
+      .eq('id', product.id);
+
+    if (prodErr) return { success: false, error: prodErr.message };
+
+    // Si se pasa sucursal, actualizar la cantidad en existencias
+    if (sucursalId && isValidUUID(sucursalId)) {
+      await client.from('existencias').upsert({
+        sucursal_id: sucursalId,
+        producto_id: product.id,
+        cantidad_disponible: product.existenciaBase,
+      });
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error actualizando producto en Supabase' };
+  }
+};
+
+export const fetchLiveKardex = async (_negocioId?: string, sucursalId?: string): Promise<KardexMovement[] | null> => {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    let query = client
+      .from('movimientos_inventario')
+      .select(`
+        id,
+        tipo_movimiento,
+        cantidad,
+        costo_unitario,
+        motivo,
+        referencia_tipo,
+        referencia_id,
+        created_at,
+        productos (
+          id,
+          nombre
+        )
+      `)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (sucursalId && isValidUUID(sucursalId)) {
+      query = query.eq('sucursal_id', sucursalId);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) return null;
+
+    return data.map((m: any) => {
+      const prod = m.productos as any;
+      let kardexTipo: KardexMovement['tipo'] = 'venta';
+      if (m.tipo_movimiento === 'venta') kardexTipo = 'venta';
+      else if (m.tipo_movimiento === 'compra') kardexTipo = 'compra';
+      else if (m.tipo_movimiento === 'ajuste_positivo') kardexTipo = 'ajuste_positivo';
+      else if (m.tipo_movimiento === 'ajuste_negativo') kardexTipo = 'ajuste_negativo';
+      else if (m.tipo_movimiento === 'merma') kardexTipo = 'merma';
+      else if (m.tipo_movimiento === 'conteo_fisico') kardexTipo = 'conteo_fisico';
+
+      return {
+        id: m.id,
+        fecha: m.created_at,
+        productoId: prod?.id || '',
+        productoNombre: prod?.nombre || 'Producto',
+        tipo: kardexTipo,
+        cantidadBase: Number(m.cantidad || 0),
+        saldoAnterior: 0,
+        saldoNuevo: 0,
+        costoUnitarioBase: Number(m.costo_unitario || 0),
+        referencia: m.motivo || m.referencia_tipo || 'Movimiento',
+        usuario: 'Sistema',
+      };
+    });
+  } catch (err) {
+    console.warn('[SupabaseService] Error consultando Kardex:', err);
+    return null;
+  }
+};
+
+// ==============================================================================
+// 7. GESTIÓN SAAS SUPER ADMIN (TENANTS LIVE)
+// ==============================================================================
+
+export const updateLiveTenantStatus = async (
+  tenantId: string,
+  status: SubscriptionStatus,
+  fechaVencimiento?: string
+): Promise<{ success: boolean; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no conectado.' };
+
+  if (!isValidUUID(tenantId)) {
+    return { success: false, error: 'ID de negocio inválido.' };
+  }
+
+  try {
+    const payload: any = { estado_suscripcion: status };
+    if (fechaVencimiento) {
+      payload.fecha_vencimiento = fechaVencimiento;
+    }
+
+    const { error } = await client.from('negocios').update(payload).eq('id', tenantId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error actualizando suscripción de negocio' };
+  }
+};
+
+export const updateLiveTenantPlan = async (
+  tenantId: string,
+  plan: SubscriptionPlan,
+  precioMensual?: number
+): Promise<{ success: boolean; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no conectado.' };
+
+  if (!isValidUUID(tenantId)) {
+    return { success: false, error: 'ID de negocio inválido.' };
+  }
+
+  try {
+    const payload: any = { plan };
+    if (precioMensual !== undefined) {
+      payload.precio_mensual = precioMensual;
+    }
+
+    const { error } = await client.from('negocios').update(payload).eq('id', tenantId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error actualizando plan' };
+  }
+};
+
+export const insertLiveTenant = async (
+  tenantData: Omit<SaaSTenant, 'id' | 'creadoEn'>
+): Promise<{ success: boolean; tenant?: SaaSTenant; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no conectado.' };
+
+  try {
+    const payload = {
+      nombre: tenantData.nombre,
+      nombre_comercial: tenantData.nombreComercial || tenantData.nombre,
+      email: tenantData.email,
+      telefono: tenantData.telefono,
+      whatsapp: tenantData.whatsapp || null,
+      direccion: tenantData.direccion || null,
+      estado_suscripcion: tenantData.estadoSuscripcion || 'activa',
+      plan: tenantData.plan || 'basico',
+      precio_mensual: tenantData.precioMensual || 15.0,
+      fecha_vencimiento: tenantData.fechaVencimiento || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      limite_sucursales: tenantData.limiteSucursales || 1,
+      limite_usuarios: tenantData.limiteUsuarios || 3,
+      activo: true,
+    };
+
+    const { data: negData, error: negErr } = await client
+      .from('negocios')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (negErr || !negData) {
+      return { success: false, error: negErr?.message || 'Error registrando negocio' };
+    }
+
+    // Crear sucursal matriz y caja por defecto
+    const { data: sucData } = await client
+      .from('sucursales')
+      .insert({
+        negocio_id: negData.id,
+        codigo: 'SUC-01',
+        nombre: 'Sucursal Central',
+        direccion: tenantData.direccion || 'Principal',
+        es_matriz: true,
+        activa: true,
+      })
+      .select('id')
+      .single();
+
+    if (sucData?.id) {
+      await client.from('cajas').insert({
+        sucursal_id: sucData.id,
+        codigo: 'CAJA-01',
+        nombre: 'Caja 01 - Mostrador',
+        activa: true,
+      });
+    }
+
+    const newTenant: SaaSTenant = {
+      id: negData.id,
+      nombre: negData.nombre,
+      nombreComercial: negData.nombre_comercial,
+      propietarioNombre: tenantData.propietarioNombre || 'Propietario',
+      email: negData.email || '',
+      telefono: negData.telefono || '',
+      whatsapp: negData.whatsapp || '',
+      direccion: negData.direccion || '',
+      estadoSuscripcion: negData.estado_suscripcion,
+      plan: negData.plan,
+      precioMensual: Number(negData.precio_mensual),
+      fechaVencimiento: negData.fecha_vencimiento,
+      limiteSucursales: negData.limite_sucursales,
+      limiteUsuarios: negData.limite_usuarios,
+      creadoEn: negData.created_at,
+    };
+
+    return { success: true, tenant: newTenant };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error creando inquilino' };
+  }
+};
+
+// ==============================================================================
+// 8. PROVEEDORES Y RECEPCIÓN DE COMPRAS EN VIVO
+// ==============================================================================
+
+export const fetchLiveSuppliers = async (negocioId?: string): Promise<Supplier[] | null> => {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    let query = client.from('proveedores').select('*').order('nombre_comercial');
+    if (negocioId && isValidUUID(negocioId)) {
+      query = query.eq('negocio_id', negocioId);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) return null;
+
+    return data.map((s: any) => ({
+      id: s.id,
+      negocioId: s.negocio_id,
+      nombreComercial: s.nombre_comercial,
+      razonSocial: s.razon_social,
+      ruc: s.ruc,
+      contactoNombre: s.contacto_nombre,
+      telefono: s.telefono,
+      email: s.email,
+      direccion: s.direccion,
+      diasCredito: Number(s.dias_credito || 0),
+      saldoPendiente: Number(s.saldo_pendiente || 0),
+      activo: Boolean(s.activo),
+    }));
+  } catch (err) {
+    console.warn('[SupabaseService] Error consultando proveedores:', err);
+    return null;
+  }
+};
+
+export const insertLiveSupplier = async (
+  supplierData: {
+    nombreComercial: string;
+    razonSocial?: string;
+    ruc?: string;
+    contactoNombre?: string;
+    telefono?: string;
+    email?: string;
+    direccion?: string;
+    diasCredito?: number;
+  },
+  negocioId: string
+): Promise<{ success: boolean; supplier?: Supplier; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no conectado.' };
+
+  if (!isValidUUID(negocioId)) {
+    return { success: false, error: 'ID de negocio inválido para crear proveedor.' };
+  }
+
+  try {
+    const payload = {
+      negocio_id: negocioId,
+      nombre_comercial: supplierData.nombreComercial.trim(),
+      razon_social: supplierData.razonSocial?.trim() || null,
+      ruc: supplierData.ruc?.trim() || null,
+      contacto_nombre: supplierData.contactoNombre?.trim() || null,
+      telefono: supplierData.telefono?.trim() || null,
+      email: supplierData.email?.trim() || null,
+      direccion: supplierData.direccion?.trim() || null,
+      dias_credito: supplierData.diasCredito || 0,
+      saldo_pendiente: 0.0,
+      activo: true,
+    };
+
+    const { data, error } = await client.from('proveedores').insert(payload).select().single();
+    if (error || !data) return { success: false, error: error?.message || 'Error guardando proveedor' };
+
+    const newSup: Supplier = {
+      id: data.id,
+      negocioId: data.negocio_id,
+      nombreComercial: data.nombre_comercial,
+      razonSocial: data.razon_social,
+      ruc: data.ruc,
+      contactoNombre: data.contacto_nombre,
+      telefono: data.telefono,
+      email: data.email,
+      direccion: data.direccion,
+      diasCredito: Number(data.dias_credito),
+      saldoPendiente: Number(data.saldo_pendiente),
+      activo: Boolean(data.activo),
+    };
+
+    return { success: true, supplier: newSup };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error inesperado registrando proveedor' };
+  }
+};
+
+export const fetchLivePurchases = async (
+  negocioId?: string,
+  sucursalId?: string
+): Promise<Purchase[] | null> => {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    let query = client
+      .from('compras')
+      .select(`
+        id,
+        numero_factura,
+        fecha_emision,
+        tipo_pago,
+        estado,
+        total,
+        observaciones,
+        proveedor_id,
+        proveedores ( nombre_comercial ),
+        compra_detalles (
+          id,
+          producto_id,
+          presentacion_id,
+          cantidad,
+          factor_conversion,
+          costo_unitario,
+          subtotal,
+          productos ( nombre ),
+          presentaciones_producto ( nombre )
+        )
+      `)
+      .order('fecha_emision', { ascending: false })
+      .limit(50);
+
+    if (negocioId && isValidUUID(negocioId)) {
+      query = query.eq('negocio_id', negocioId);
+    }
+    if (sucursalId && isValidUUID(sucursalId)) {
+      query = query.eq('sucursal_id', sucursalId);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) return null;
+
+    return data.map((c: any) => ({
+      id: c.id,
+      proveedorId: c.proveedor_id,
+      proveedorNombre: c.proveedores?.nombre_comercial || 'Proveedor',
+      numeroFactura: c.numero_factura || 'S/N',
+      fechaEmision: c.fecha_emision,
+      tipoPago: c.tipo_pago || 'contado',
+      estado: c.estado || 'recibida',
+      total: Number(c.total || 0),
+      observaciones: c.observaciones,
+      items: (c.compra_detalles || []).map((d: any) => ({
+        id: d.id,
+        productoId: d.producto_id,
+        productoNombre: d.productos?.nombre || 'Producto',
+        presentacionId: d.presentacion_id,
+        presentacionNombre: d.presentaciones_producto?.nombre || 'Presentación',
+        cantidad: Number(d.cantidad || 0),
+        factorConversion: Number(d.factor_conversion || 1),
+        costoUnitario: Number(d.costo_unitario || 0),
+        subtotal: Number(d.subtotal || 0),
+      })),
+    }));
+  } catch (err) {
+    console.warn('[SupabaseService] Error consultando compras:', err);
+    return null;
+  }
+};
+
+export const insertLivePurchase = async (
+  purchaseData: {
+    proveedorId: string;
+    numeroFactura?: string;
+    tipoPago: 'contado' | 'credito';
+    observaciones?: string;
+    items: {
+      productoId: string;
+      presentacionId: string;
+      cantidad: number;
+      factorConversion: number;
+      costoUnitario: number;
+      subtotal: number;
+    }[];
+  },
+  negocioId: string,
+  sucursalId?: string,
+  usuarioId?: string
+): Promise<{ success: boolean; purchaseId?: string; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no conectado.' };
+
+  if (!isValidUUID(negocioId)) {
+    return { success: false, error: 'ID de negocio inválido para registrar compra.' };
+  }
+
+  try {
+    let finalSucursalId = isValidUUID(sucursalId) ? sucursalId : null;
+    if (!finalSucursalId) {
+      const { data: firstSuc } = await client.from('sucursales').select('id').eq('negocio_id', negocioId).limit(1).maybeSingle();
+      if (firstSuc && isValidUUID(firstSuc.id)) {
+        finalSucursalId = firstSuc.id;
+      }
+    }
+
+    if (!finalSucursalId) {
+      return { success: false, error: 'No se encontró una sucursal para ingresar la mercadería.' };
+    }
+
+    const totalCompra = purchaseData.items.reduce((sum, item) => sum + item.subtotal, 0);
+
+    // 1. Insertar Cabecera de Compra
+    const compraPayload: any = {
+      negocio_id: negocioId,
+      sucursal_id: finalSucursalId,
+      proveedor_id: purchaseData.proveedorId,
+      numero_factura: purchaseData.numeroFactura || null,
+      fecha_emision: new Date().toISOString().split('T')[0],
+      tipo_pago: purchaseData.tipoPago || 'contado',
+      estado: 'recibida',
+      subtotal: totalCompra,
+      total: totalCompra,
+      observaciones: purchaseData.observaciones || null,
+    };
+
+    if (isValidUUID(usuarioId)) {
+      compraPayload.usuario_id = usuarioId;
+    }
+
+    const { data: compraRow, error: compraErr } = await client
+      .from('compras')
+      .insert(compraPayload)
+      .select('id')
+      .single();
+
+    if (compraErr || !compraRow) {
+      return { success: false, error: compraErr?.message || 'Error guardando cabecera de compra' };
+    }
+
+    const newCompraId = compraRow.id;
+
+    // 2. Insertar Detalles de Compra
+    const detalles = purchaseData.items.map(i => ({
+      compra_id: newCompraId,
+      producto_id: i.productoId,
+      presentacion_id: i.presentacionId,
+      cantidad: i.cantidad,
+      factor_conversion: i.factorConversion,
+      costo_unitario: i.costoUnitario,
+      subtotal: i.subtotal,
+    }));
+
+    const { error: detErr } = await client.from('compra_detalles').insert(detalles);
+    if (detErr) {
+      return { success: false, error: `Compra registrada (#${newCompraId}), pero falló detalles: ${detErr.message}` };
+    }
+
+    // 3. Afectar Inventario en 'existencias' y registrar en 'movimientos_inventario'
+    for (const item of purchaseData.items) {
+      const cantidadBase = item.cantidad * item.factorConversion;
+
+      // Obtener existencia actual
+      const { data: exRow } = await client
+        .from('existencias')
+        .select('cantidad_disponible')
+        .eq('sucursal_id', finalSucursalId)
+        .eq('producto_id', item.productoId)
+        .maybeSingle();
+
+      const currentStock = Number(exRow?.cantidad_disponible || 0);
+      const newStock = currentStock + cantidadBase;
+
+      await client.from('existencias').upsert({
+        sucursal_id: finalSucursalId,
+        producto_id: item.productoId,
+        cantidad_disponible: newStock,
+      });
+
+      // Kardex
+      await client.from('movimientos_inventario').insert({
+        sucursal_id: finalSucursalId,
+        producto_id: item.productoId,
+        tipo_movimiento: 'compra',
+        cantidad: cantidadBase,
+        costo_unitario: item.costoUnitario,
+        referencia_tipo: 'compras',
+        referencia_id: newCompraId,
+        motivo: `Recepción de mercadería factura #${purchaseData.numeroFactura || 'S/N'}`,
+      });
+    }
+
+    return { success: true, purchaseId: newCompraId };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error procesando recepción de compra' };
+  }
+};
+
+// ==============================================================================
+// 9. CONTEO FÍSICO Y AUDITORÍA DE INVENTARIO EN VIVO
+// ==============================================================================
+
+export const saveLivePhysicalAudit = async (
+  sucursalId: string,
+  counts: Record<string, number>,
+  products: Product[],
+  usuarioId?: string,
+  notas?: string
+): Promise<{ success: boolean; auditId?: string; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no conectado.' };
+
+  if (!isValidUUID(sucursalId)) {
+    return { success: false, error: 'ID de sucursal inválido para guardar auditoría física.' };
+  }
+
+  try {
+    // 1. Crear cabecera en 'conteos_fisicos'
+    const conteoPayload: any = {
+      sucursal_id: sucursalId,
+      titulo: `Auditoría Física ${new Date().toLocaleDateString('es-NI')}`,
+      estado: 'aplicado',
+      fecha_cierre: new Date().toISOString(),
+      notas: notas || 'Ajuste de inventario físico completado desde panel',
+    };
+
+    if (isValidUUID(usuarioId)) {
+      conteoPayload.usuario_creador_id = usuarioId;
+      conteoPayload.usuario_aprobador_id = usuarioId;
+    }
+
+    const { data: auditRow, error: auditErr } = await client
+      .from('conteos_fisicos')
+      .insert(conteoPayload)
+      .select('id')
+      .single();
+
+    if (auditErr || !auditRow) {
+      return { success: false, error: auditErr?.message || 'Error guardando auditoría física' };
+    }
+
+    const auditId = auditRow.id;
+
+    // 2. Iterar sobre productos ajustados
+    for (const prod of products) {
+      if (counts[prod.id] !== undefined) {
+        const stockContado = counts[prod.id];
+        const stockSistema = prod.existenciaBase;
+        const diferencia = stockContado - stockSistema;
+
+        // Guardar detalle
+        await client.from('conteo_detalles').insert({
+          conteo_id: auditId,
+          producto_id: prod.id,
+          stock_sistema_base: stockSistema,
+          stock_contado_base: stockContado,
+          ajuste_aplicado: true,
+        });
+
+        // Actualizar existencias
+        await client.from('existencias').upsert({
+          sucursal_id: sucursalId,
+          producto_id: prod.id,
+          cantidad_disponible: stockContado,
+        });
+
+        // Kardex si hay diferencia
+        if (diferencia !== 0) {
+          const tipoMov = diferencia > 0 ? 'ajuste_positivo' : 'ajuste_negativo';
+          const motivo = diferencia > 0 ? 'Sobrante detectado en conteo físico' : 'Faltante / Merma detectada en conteo físico';
+
+          await client.from('movimientos_inventario').insert({
+            sucursal_id: sucursalId,
+            producto_id: prod.id,
+            tipo_movimiento: tipoMov,
+            cantidad: Math.abs(diferencia),
+            referencia_tipo: 'conteos_fisicos',
+            referencia_id: auditId,
+            motivo: `${motivo} (Sistema: ${stockSistema} -> Físico: ${stockContado})`,
+          });
+        }
+      }
+    }
+
+    return { success: true, auditId };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error aplicando ajuste de inventario' };
   }
 };

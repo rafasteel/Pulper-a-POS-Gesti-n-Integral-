@@ -16,6 +16,8 @@ import {
   SaaSTenant,
   SubscriptionStatus,
   SubscriptionPlan,
+  Supplier,
+  Purchase,
 } from '../types';
 import {
   INITIAL_CONFIG,
@@ -43,6 +45,19 @@ import {
   fetchLiveExpenses,
   insertLiveCustomer,
   insertLiveCustomerPayment,
+  insertLiveProduct,
+  insertLivePresentation,
+  deleteLivePresentation,
+  updateLiveProduct,
+  fetchLiveKardex,
+  updateLiveTenantStatus,
+  updateLiveTenantPlan,
+  insertLiveTenant,
+  fetchLiveSuppliers,
+  insertLiveSupplier,
+  fetchLivePurchases,
+  insertLivePurchase,
+  saveLivePhysicalAudit,
   isValidUUID,
 } from '../services/supabaseService';
 
@@ -72,13 +87,13 @@ interface AppContextType {
   lockScreen: () => void;
   syncLiveCatalog: () => Promise<void>;
 
-  // SaaS Multi-Tenant & Subscription Management
+  // SaaS Multi-Tenant & Subscription Management (100% Cloud)
   tenants: SaaSTenant[];
   currentTenant: SaaSTenant;
   switchTenant: (tenantId: string) => void;
-  toggleTenantSubscription: (tenantId: string, status: SubscriptionStatus) => void;
-  updateTenantPlan: (tenantId: string, plan: SubscriptionPlan) => void;
-  addNewTenant: (tenantData: Omit<SaaSTenant, 'id' | 'creadoEn'>) => SaaSTenant;
+  toggleTenantSubscription: (tenantId: string, status?: SubscriptionStatus) => Promise<{ success: boolean; error?: string }>;
+  updateTenantPlan: (tenantId: string, plan: SubscriptionPlan) => Promise<{ success: boolean; error?: string }>;
+  addNewTenant: (tenantData: Omit<SaaSTenant, 'id' | 'creadoEn'>) => Promise<{ success: boolean; tenant?: SaaSTenant; error?: string }>;
   isCurrentTenantSuspended: boolean;
 
   categories: Category[];
@@ -92,6 +107,8 @@ interface AppContextType {
   cashClosings: CashClosingReport[];
   kardex: KardexMovement[];
   expenses: OperationalExpense[];
+  suppliers: Supplier[];
+  purchases: Purchase[];
   
   // Cart Actions
   addToCart: (product: Product, presentation: ProductPresentation, qty?: number) => void;
@@ -111,17 +128,59 @@ interface AppContextType {
     referencia?: string;
   }) => Promise<{ success: boolean; sale?: Sale; error?: string }>;
   
-  // Barcode & Product
+  // Barcode & Product (100% Cloud)
   findProductByBarcode: (barcode: string) => { product: Product; presentation: ProductPresentation } | null;
   quickRegisterProduct: (data: {
     nombre: string;
-    codigoBarras: string;
+    codigoBarras?: string;
     precioCosto: number;
     precioVenta: number;
-    categoriaId: string;
+    categoriaId?: string;
     stockInicial: number;
-  }) => Product;
-  updateProduct: (product: Product) => void;
+    permiteDecimales?: boolean;
+    esFavorito?: boolean;
+    stockMinimo?: number;
+    stockMaximo?: number;
+    unidadMedidaBase?: string;
+  }) => Promise<{ success: boolean; product?: Product; error?: string }>;
+  updateProduct: (product: Product) => Promise<{ success: boolean; error?: string }>;
+  addPresentationToProduct: (productoId: string, data: {
+    nombre: string;
+    factorConversion: number;
+    codigoBarras?: string;
+    precioCosto: number;
+    precioVenta: number;
+  }) => Promise<{ success: boolean; presentation?: ProductPresentation; error?: string }>;
+  deletePresentationFromProduct: (presId: string) => Promise<{ success: boolean; error?: string }>;
+
+  // Physical Audit (100% Cloud)
+  applyPhysicalAuditAdjustment: (counts: Record<string, number>, notas?: string) => Promise<{ success: boolean; error?: string }>;
+
+  // Purchases & Suppliers (100% Cloud)
+  addNewSupplier: (data: {
+    nombreComercial: string;
+    razonSocial?: string;
+    ruc?: string;
+    contactoNombre?: string;
+    telefono?: string;
+    email?: string;
+    direccion?: string;
+    diasCredito?: number;
+  }) => Promise<{ success: boolean; supplier?: Supplier; error?: string }>;
+  registerPurchase: (data: {
+    proveedorId: string;
+    numeroFactura?: string;
+    tipoPago: 'contado' | 'credito';
+    observaciones?: string;
+    items: {
+      productoId: string;
+      presentacionId: string;
+      cantidad: number;
+      factorConversion: number;
+      costoUnitario: number;
+      subtotal: number;
+    }[];
+  }) => Promise<{ success: boolean; purchaseId?: string; error?: string }>;
 
   // Cash Operations
   addCashMovement: (tipo: 'entrada_efectivo' | 'retiro_gasto' | 'retiro_deposito', monto: number, motivo: string) => Promise<{ success: boolean; error?: string }>;
@@ -151,15 +210,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isLoadingLiveCatalog, setIsLoadingLiveCatalog] = useState<boolean>(false);
   const isSupabaseConnected = isSupabaseConfigured();
   
-  // Estado de Inquilinos SaaS
+  // Estado de Inquilinos SaaS (100% Cloud)
   const [tenants, setTenants] = useState<SaaSTenant[]>(() => {
     const saved = localStorage.getItem('pulperia_saas_tenants');
-    return saved ? JSON.parse(saved) : INITIAL_TENANTS;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (
+          Array.isArray(parsed) &&
+          parsed.length > 0 &&
+          parsed.every((t: any) => isValidUUID(t.id) && !String(t.id).startsWith('tenant-'))
+        ) {
+          return parsed;
+        }
+      } catch (e) {
+        // ignore error
+      }
+    }
+    localStorage.removeItem('pulperia_saas_tenants');
+    return INITIAL_TENANTS;
   });
+
   const [currentTenantId, setCurrentTenantId] = useState<string>(() => {
     const saved = localStorage.getItem('pulperia_active_tenant_id');
-    if (saved === 'tenant-1') return '11111111-1111-1111-1111-111111111111';
-    return saved || INITIAL_TENANTS[0].id;
+    if (saved && isValidUUID(saved) && !saved.startsWith('tenant-')) {
+      return saved;
+    }
+    return INITIAL_TENANTS[0].id;
   });
 
   const currentTenant = tenants.find(t => t.id === currentTenantId) || tenants[0];
@@ -177,7 +254,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.every((p: any) => isValidUUID(p.id))) {
+        if (
+          Array.isArray(parsed) &&
+          parsed.every((p: any) => isValidUUID(p.id) && !String(p.id).startsWith('prod-'))
+        ) {
           return parsed;
         }
       } catch (e) {
@@ -187,6 +267,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem('pulperia_products');
     return [];
   });
+
   const [customers, setCustomers] = useState<Customer[]>(() => {
     const saved = localStorage.getItem('pulperia_customers');
     if (saved) {
@@ -202,7 +283,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem('pulperia_customers');
     return [];
   });
+
   const [cashRegister, setCashRegister] = useState<CashRegister>(INITIAL_REGISTER);
+
+  // Auto-saneamiento estricto de carrito contra IDs simulados
   const [cart, setCart] = useState<CartItem[]>(() => {
     const saved = localStorage.getItem('pulperia_cart');
     if (saved) {
@@ -210,7 +294,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const parsed = JSON.parse(saved);
         if (
           Array.isArray(parsed) &&
-          parsed.every((item: any) => isValidUUID(item.id) && isValidUUID(item.productoId))
+          parsed.every(
+            (item: any) =>
+              item?.producto &&
+              isValidUUID(item.producto.id) &&
+              !String(item.producto.id).startsWith('prod-') &&
+              item?.presentacion &&
+              isValidUUID(item.presentacion.id) &&
+              !String(item.presentacion.id).startsWith('pres-')
+          )
         ) {
           return parsed;
         }
@@ -221,18 +313,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem('pulperia_cart');
     return [];
   });
+
   const [heldCarts, setHeldCarts] = useState<HeldCart[]>(() => {
     const saved = localStorage.getItem('pulperia_held_carts');
-    return saved ? JSON.parse(saved) : [];
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((c: any) =>
+            Array.isArray(c.items) &&
+            c.items.every(
+              (item: any) =>
+                item?.producto &&
+                isValidUUID(item.producto.id) &&
+                !String(item.producto.id).startsWith('prod-') &&
+                item?.presentacion &&
+                isValidUUID(item.presentacion.id) &&
+                !String(item.presentacion.id).startsWith('pres-')
+            )
+          );
+        }
+      } catch (e) {
+        // ignore error
+      }
+    }
+    localStorage.removeItem('pulperia_held_carts');
+    return [];
   });
+
   const [salesHistory, setSalesHistory] = useState<Sale[]>(() => {
     const saved = localStorage.getItem('pulperia_sales');
     return saved ? JSON.parse(saved) : [];
   });
+
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashClosings, setCashClosings] = useState<CashClosingReport[]>([]);
   const [kardex, setKardex] = useState<KardexMovement[]>([]);
   const [expenses, setExpenses] = useState<OperationalExpense[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [purchases, setPurchases] = useState<Purchase[]>([]);
 
   // Guardar en localStorage para persistencia offline
   useEffect(() => {
@@ -275,29 +394,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const toggleTenantSubscription = (tenantId: string, status?: SubscriptionStatus) => {
+  // Mutación en vivo de suscripción SaaS (Supabase)
+  const toggleTenantSubscription = async (
+    tenantId: string,
+    status?: SubscriptionStatus
+  ): Promise<{ success: boolean; error?: string }> => {
+    const target = tenants.find(t => t.id === tenantId);
+    const nuevoEstado = status || (target?.estadoSuscripcion === 'suspendida' ? 'activa' : 'suspendida');
+    const nuevoVence = nuevoEstado === 'activa' && target && new Date(target.fechaVencimiento) < new Date()
+      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      : target?.fechaVencimiento;
+
+    if (isSupabaseConfigured() && isValidUUID(tenantId)) {
+      const res = await updateLiveTenantStatus(tenantId, nuevoEstado, nuevoVence);
+      if (!res.success) {
+        soundManager.playError();
+        return { success: false, error: res.error };
+      }
+    }
+
     setTenants(prev =>
       prev.map(t => {
         if (t.id === tenantId) {
-          const nuevoEstado = status || (t.estadoSuscripcion === 'suspendida' ? 'activa' : 'suspendida');
           return {
             ...t,
             estadoSuscripcion: nuevoEstado,
-            fechaVencimiento: nuevoEstado === 'activa' && new Date(t.fechaVencimiento) < new Date()
-              ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-              : t.fechaVencimiento,
+            fechaVencimiento: nuevoVence || t.fechaVencimiento,
           };
         }
         return t;
       })
     );
+
+    soundManager.playTouchClick();
+    return { success: true };
   };
 
-  const updateTenantPlan = (tenantId: string, plan: SubscriptionPlan) => {
+  const updateTenantPlan = async (
+    tenantId: string,
+    plan: SubscriptionPlan
+  ): Promise<{ success: boolean; error?: string }> => {
+    const precio = plan === 'basico' ? 15 : plan === 'pro' ? 29 : 49;
+
+    if (isSupabaseConfigured() && isValidUUID(tenantId)) {
+      const res = await updateLiveTenantPlan(tenantId, plan, precio);
+      if (!res.success) {
+        soundManager.playError();
+        return { success: false, error: res.error };
+      }
+    }
+
     setTenants(prev =>
       prev.map(t => {
         if (t.id === tenantId) {
-          const precio = plan === 'basico' ? 15 : plan === 'pro' ? 29 : 49;
           return {
             ...t,
             plan,
@@ -307,19 +456,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return t;
       })
     );
+
+    soundManager.playTouchClick();
+    return { success: true };
   };
 
-  const addNewTenant = (tenantData: Omit<SaaSTenant, 'id' | 'creadoEn'>): SaaSTenant => {
-    const newTenant: SaaSTenant = {
-      ...tenantData,
-      id: `tenant-${Date.now()}`,
-      creadoEn: new Date().toISOString(),
-    };
-    setTenants(prev => [newTenant, ...prev]);
-    return newTenant;
+  const addNewTenant = async (
+    tenantData: Omit<SaaSTenant, 'id' | 'creadoEn'>
+  ): Promise<{ success: boolean; tenant?: SaaSTenant; error?: string }> => {
+    if (isSupabaseConfigured()) {
+      const res = await insertLiveTenant(tenantData);
+      if (!res.success || !res.tenant) {
+        soundManager.playError();
+        return { success: false, error: res.error || 'Error registrando negocio en Supabase' };
+      }
+
+      setTenants(prev => [res.tenant!, ...prev]);
+      soundManager.playPaymentSuccess();
+      return { success: true, tenant: res.tenant };
+    }
+
+    return { success: false, error: 'Supabase no está configurado en .env.local. No se permiten datos locales simulados.' };
   };
 
-  // Sincronización en vivo con Supabase
+  // Sincronización 100% en vivo con Supabase
   const syncLiveCatalog = async () => {
     if (!isSupabaseConfigured()) return;
     setIsLoadingLiveCatalog(true);
@@ -327,20 +487,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // 1. Sincronizar catálogo real de Supabase (sin fallback a mock data)
       const liveData = await fetchLiveCatalog(currentTenantId);
       if (liveData) {
-        setProducts(liveData.products);
+        const cleanProds = liveData.products.filter(p => isValidUUID(p.id) && !p.id.startsWith('prod-'));
+        setProducts(cleanProds);
         setCategories(liveData.categories);
       }
       
       // 2. Sincronizar clientes reales de Supabase
       const liveCustomers = await fetchLiveCustomers(currentTenantId);
       if (liveCustomers) {
-        setCustomers(liveCustomers);
+        setCustomers(liveCustomers.filter(c => isValidUUID(c.id)));
       }
 
       // 3. Sincronizar negocios/tenants de Supabase
       const liveTenants = await fetchLiveTenants();
       if (liveTenants && liveTenants.length > 0) {
-        setTenants(liveTenants);
+        const cleanTenants = liveTenants.filter(t => isValidUUID(t.id));
+        setTenants(cleanTenants);
       }
 
       // 4. Sincronizar estado de apertura de caja de la sucursal activa
@@ -360,6 +522,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const liveExpenses = await fetchLiveExpenses(currentTenantId, activeSucursalId);
       if (liveExpenses) {
         setExpenses(liveExpenses);
+      }
+
+      // 6. Sincronizar proveedores y compras de Supabase
+      const liveSuppliers = await fetchLiveSuppliers(currentTenantId);
+      if (liveSuppliers) {
+        setSuppliers(liveSuppliers);
+      }
+
+      const livePurchases = await fetchLivePurchases(currentTenantId, activeSucursalId);
+      if (livePurchases) {
+        setPurchases(livePurchases);
+      }
+
+      // 7. Sincronizar Kardex inmutable de Supabase
+      const liveKardex = await fetchLiveKardex(currentTenantId, activeSucursalId);
+      if (liveKardex) {
+        setKardex(liveKardex);
       }
     } catch (err) {
       console.warn('Aviso: Error sincronizando datos con Supabase:', err);
@@ -777,23 +956,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Registro ultra-rápido de producto no catalogado
-  const quickRegisterProduct = (data: {
+  // Registro en vivo de producto en Supabase (100% Cloud)
+  const quickRegisterProduct = async (data: {
     nombre: string;
-    codigoBarras: string;
+    codigoBarras?: string;
     precioCosto: number;
     precioVenta: number;
-    categoriaId: string;
+    categoriaId?: string;
     stockInicial: number;
-  }): Product => {
-    const prodId = `prod-${Date.now()}`;
-    const presId = `pres-${Date.now()}`;
+    permiteDecimales?: boolean;
+    esFavorito?: boolean;
+    stockMinimo?: number;
+    stockMaximo?: number;
+    unidadMedidaBase?: string;
+  }): Promise<{ success: boolean; product?: Product; error?: string }> => {
+    if (isSupabaseConfigured()) {
+      const res = await insertLiveProduct(data, currentTenantId, currentUser.sucursalId);
+      if (!res.success || !res.product) {
+        soundManager.playError();
+        return { success: false, error: res.error || 'Error creando producto en Supabase' };
+      }
+
+      setProducts(prev => [res.product!, ...prev]);
+      soundManager.playPaymentSuccess();
+      return { success: true, product: res.product };
+    }
+
+    // Fallback con UUID si no está conectado
+    const prodId = crypto.randomUUID ? crypto.randomUUID() : '11111111-0000-0000-0000-' + Date.now().toString(16).padStart(12, '0');
+    const presId = crypto.randomUUID ? crypto.randomUUID() : '22222222-0000-0000-0000-' + Date.now().toString(16).padStart(12, '0');
     const newPresentation: ProductPresentation = {
       id: presId,
       productoId: prodId,
       nombre: 'Unidad',
       factorConversion: 1,
-      codigoBarras: data.codigoBarras,
+      codigoBarras: data.codigoBarras || '',
       precioCosto: data.precioCosto,
       precioVenta: data.precioVenta,
       esPresentacionBase: true,
@@ -802,24 +999,214 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const newProduct: Product = {
       id: prodId,
-      categoriaId: data.categoriaId,
+      categoriaId: data.categoriaId || '',
       nombre: data.nombre,
-      unidadMedidaBase: 'unidad',
-      permiteDecimales: false,
-      esFavorito: true,
-      stockMinimo: 5,
-      stockMaximo: 50,
+      unidadMedidaBase: data.unidadMedidaBase || 'unidad',
+      permiteDecimales: data.permiteDecimales ?? false,
+      esFavorito: data.esFavorito ?? true,
+      stockMinimo: data.stockMinimo ?? 5,
+      stockMaximo: data.stockMaximo ?? 50,
       perecedero: false,
       existenciaBase: data.stockInicial,
       presentaciones: [newPresentation],
     };
 
     setProducts(prev => [newProduct, ...prev]);
-    return newProduct;
+    return { success: true, product: newProduct };
   };
 
-  const updateProduct = (updated: Product) => {
+  const updateProduct = async (updated: Product): Promise<{ success: boolean; error?: string }> => {
+    if (isSupabaseConfigured() && isValidUUID(updated.id)) {
+      const res = await updateLiveProduct(updated, currentUser.sucursalId);
+      if (!res.success) {
+        soundManager.playError();
+        return { success: false, error: res.error };
+      }
+    }
     setProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+    return { success: true };
+  };
+
+  const addPresentationToProduct = async (
+    productoId: string,
+    data: {
+      nombre: string;
+      factorConversion: number;
+      codigoBarras?: string;
+      precioCosto: number;
+      precioVenta: number;
+    }
+  ): Promise<{ success: boolean; presentation?: ProductPresentation; error?: string }> => {
+    if (isSupabaseConfigured() && isValidUUID(productoId)) {
+      const res = await insertLivePresentation(productoId, data);
+      if (!res.success || !res.presentation) {
+        soundManager.playError();
+        return { success: false, error: res.error || 'Error insertando presentación en Supabase' };
+      }
+
+      setProducts(prev =>
+        prev.map(p => {
+          if (p.id === productoId) {
+            return {
+              ...p,
+              presentaciones: [...p.presentaciones, res.presentation!],
+            };
+          }
+          return p;
+        })
+      );
+      soundManager.playPaymentSuccess();
+      return { success: true, presentation: res.presentation };
+    }
+
+    const localPres: ProductPresentation = {
+      id: crypto.randomUUID ? crypto.randomUUID() : '33333333-0000-0000-0000-' + Date.now().toString(16).padStart(12, '0'),
+      productoId,
+      nombre: data.nombre,
+      factorConversion: data.factorConversion,
+      codigoBarras: data.codigoBarras || '',
+      precioCosto: data.precioCosto,
+      precioVenta: data.precioVenta,
+      esPresentacionBase: false,
+      activo: true,
+    };
+    setProducts(prev =>
+      prev.map(p => (p.id === productoId ? { ...p, presentaciones: [...p.presentaciones, localPres] } : p))
+    );
+    return { success: true, presentation: localPres };
+  };
+
+  const deletePresentationFromProduct = async (
+    presId: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (isSupabaseConfigured() && isValidUUID(presId)) {
+      const res = await deleteLivePresentation(presId);
+      if (!res.success) {
+        soundManager.playError();
+        return { success: false, error: res.error };
+      }
+    }
+
+    setProducts(prev =>
+      prev.map(p => ({
+        ...p,
+        presentaciones: p.presentaciones.filter(pr => pr.id !== presId),
+      }))
+    );
+    return { success: true };
+  };
+
+  // Conteo Físico y Auditoría en Supabase
+  const applyPhysicalAuditAdjustment = async (
+    counts: Record<string, number>,
+    notas?: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (isSupabaseConfigured()) {
+      const sucursalId = currentUser.sucursalId;
+      if (!sucursalId || !isValidUUID(sucursalId)) {
+        return { success: false, error: 'No se puede guardar ajuste físico: Sucursal no configurada.' };
+      }
+
+      const res = await saveLivePhysicalAudit(sucursalId, counts, products, currentUser.id, notas);
+      if (!res.success) {
+        soundManager.playError();
+        return { success: false, error: res.error || 'Error aplicando ajuste en Supabase' };
+      }
+
+      // Re-sincronizar Kardex y Catálogo desde Supabase
+      const liveData = await fetchLiveCatalog(currentTenantId);
+      if (liveData) setProducts(liveData.products);
+
+      const liveKardex = await fetchLiveKardex(currentTenantId, sucursalId);
+      if (liveKardex) setKardex(liveKardex);
+
+      soundManager.playPaymentSuccess();
+      return { success: true };
+    }
+
+    // Fallback local
+    setProducts(prev =>
+      prev.map(p => (counts[p.id] !== undefined ? { ...p, existenciaBase: counts[p.id] } : p))
+    );
+    return { success: true };
+  };
+
+  // Proveedores y Compras
+  const addNewSupplier = async (data: {
+    nombreComercial: string;
+    razonSocial?: string;
+    ruc?: string;
+    contactoNombre?: string;
+    telefono?: string;
+    email?: string;
+    direccion?: string;
+    diasCredito?: number;
+  }): Promise<{ success: boolean; supplier?: Supplier; error?: string }> => {
+    if (isSupabaseConfigured()) {
+      const res = await insertLiveSupplier(data, currentTenantId);
+      if (!res.success || !res.supplier) {
+        soundManager.playError();
+        return { success: false, error: res.error || 'Error registrando proveedor en Supabase' };
+      }
+      setSuppliers(prev => [res.supplier!, ...prev]);
+      soundManager.playPaymentSuccess();
+      return { success: true, supplier: res.supplier };
+    }
+
+    const localSup: Supplier = {
+      id: crypto.randomUUID ? crypto.randomUUID() : '44444444-0000-0000-0000-' + Date.now().toString(16).padStart(12, '0'),
+      negocioId: currentTenantId,
+      nombreComercial: data.nombreComercial,
+      razonSocial: data.razonSocial,
+      ruc: data.ruc,
+      contactoNombre: data.contactoNombre,
+      telefono: data.telefono,
+      email: data.email,
+      direccion: data.direccion,
+      diasCredito: data.diasCredito || 0,
+      saldoPendiente: 0,
+      activo: true,
+    };
+    setSuppliers(prev => [localSup, ...prev]);
+    return { success: true, supplier: localSup };
+  };
+
+  const registerPurchase = async (data: {
+    proveedorId: string;
+    numeroFactura?: string;
+    tipoPago: 'contado' | 'credito';
+    observaciones?: string;
+    items: {
+      productoId: string;
+      presentacionId: string;
+      cantidad: number;
+      factorConversion: number;
+      costoUnitario: number;
+      subtotal: number;
+    }[];
+  }): Promise<{ success: boolean; purchaseId?: string; error?: string }> => {
+    if (isSupabaseConfigured()) {
+      const res = await insertLivePurchase(data, currentTenantId, currentUser.sucursalId, currentUser.id);
+      if (!res.success) {
+        soundManager.playError();
+        return { success: false, error: res.error || 'Error guardando compra en Supabase' };
+      }
+
+      // Re-sincronizar catálogo para reflejar nuevo stock de inmediato
+      const liveData = await fetchLiveCatalog(currentTenantId);
+      if (liveData) setProducts(liveData.products);
+
+      const livePurchases = await fetchLivePurchases(currentTenantId, currentUser.sucursalId);
+      if (livePurchases) setPurchases(livePurchases);
+
+      const liveKardex = await fetchLiveKardex(currentTenantId, currentUser.sucursalId);
+      if (liveKardex) setKardex(liveKardex);
+
+      soundManager.playPaymentSuccess();
+      return { success: true, purchaseId: res.purchaseId };
+    }
+
+    return { success: false, error: 'Supabase no está conectado para registrar compras.' };
   };
 
   // Movimientos de efectivo (entradas y salidas de caja en Supabase)
@@ -1261,6 +1648,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         cashClosings,
         kardex,
         expenses,
+        suppliers,
+        purchases,
         addToCart,
         removeFromCart,
         updateQuantity,
@@ -1273,6 +1662,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         findProductByBarcode,
         quickRegisterProduct,
         updateProduct,
+        addPresentationToProduct,
+        deletePresentationFromProduct,
+        applyPhysicalAuditAdjustment,
+        addNewSupplier,
+        registerPurchase,
         addCashMovement,
         closeCashRegisterBlind,
         openCashRegister,

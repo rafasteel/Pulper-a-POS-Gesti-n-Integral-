@@ -11,6 +11,7 @@ import {
   Brain,
   Settings,
   Building2,
+  Truck,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { soundManager } from '../../utils/audioHaptics';
@@ -19,6 +20,7 @@ export type NavTab =
   | 'pos'
   | 'scanner_movil'
   | 'inventario'
+  | 'compras'
   | 'conteo'
   | 'kiosco'
   | 'caja'
@@ -48,6 +50,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, onTabChange }) => {
     { id: 'pos', label: 'POS Venta', icon: ShoppingCart, hotkey: 'F1' },
     { id: 'scanner_movil', label: 'Cámara Escáner', icon: QrCode },
     { id: 'inventario', label: 'Inventario & Kardex', icon: Package },
+    { id: 'compras', label: 'Compras & Proveedores', icon: Truck },
     { id: 'conteo', label: 'Conteo Físico', icon: ClipboardCheck },
     { id: 'kiosco', label: 'Kiosco Precios', icon: Search },
     { id: 'caja', label: 'Caja & Arqueo', icon: DollarSign },

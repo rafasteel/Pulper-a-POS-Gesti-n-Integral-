@@ -22,6 +22,8 @@ export const QuickRegisterModal: React.FC<QuickRegisterModalProps> = ({
   const [precioVenta, setPrecioVenta] = useState('');
   const [categoriaId, setCategoriaId] = useState(categories[0]?.id || '');
   const [stockInicial, setStockInicial] = useState('12');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (initialBarcode) {
@@ -31,11 +33,12 @@ export const QuickRegisterModal: React.FC<QuickRegisterModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
     if (!nombre.trim() || !codigoBarras.trim() || !precioVenta) {
       soundManager.playError();
-      alert('Por favor complete los campos obligatorios');
+      setErrorMessage('Por favor complete los campos obligatorios (*).');
       return;
     }
 
@@ -43,19 +46,32 @@ export const QuickRegisterModal: React.FC<QuickRegisterModalProps> = ({
     const numVenta = parseFloat(precioVenta) || 0;
     const numStock = parseFloat(stockInicial) || 0;
 
-    const newProd = quickRegisterProduct({
-      nombre: nombre.trim(),
-      codigoBarras: codigoBarras.trim(),
-      precioCosto: numCosto,
-      precioVenta: numVenta,
-      categoriaId,
-      stockInicial: numStock,
-    });
+    setIsSubmitting(true);
+    try {
+      const res = await quickRegisterProduct({
+        nombre: nombre.trim(),
+        codigoBarras: codigoBarras.trim(),
+        precioCosto: numCosto,
+        precioVenta: numVenta,
+        categoriaId,
+        stockInicial: numStock,
+      });
 
-    soundManager.playPaymentSuccess();
-    // Agregar inmediatamente al carrito
-    addToCart(newProd, newProd.presentaciones[0], 1);
-    onClose();
+      if (!res.success || !res.product) {
+        soundManager.playError();
+        setErrorMessage(`Rechazo de Supabase: ${res.error || 'No se pudo crear el producto en la base de datos.'}`);
+        return;
+      }
+
+      soundManager.playPaymentSuccess();
+      addToCart(res.product, res.product.presentaciones[0], 1);
+      onClose();
+    } catch (err: any) {
+      soundManager.playError();
+      setErrorMessage(err.message || 'Error inesperado registrando producto');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -70,6 +86,13 @@ export const QuickRegisterModal: React.FC<QuickRegisterModalProps> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {errorMessage && (
+          <div className="mx-4 mt-3 p-3 rounded-xl bg-rose-950/80 border-2 border-rose-500/70 text-rose-200 text-xs flex items-start gap-2 animate-in fade-in">
+            <span className="text-sm">⚠️</span>
+            <div className="flex-1 font-semibold">{errorMessage}</div>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="p-4 space-y-3">
           <div>
@@ -160,10 +183,15 @@ export const QuickRegisterModal: React.FC<QuickRegisterModalProps> = ({
           <div className="pt-2">
             <button
               type="submit"
-              className="w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/20 transition cursor-pointer active:scale-95"
+              disabled={isSubmitting}
+              className={`w-full h-11 rounded-xl text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg transition cursor-pointer active:scale-95 ${
+                isSubmitting
+                  ? 'bg-slate-700 opacity-60 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20'
+              }`}
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>Guardar y Agregar al Carrito</span>
+              <span>{isSubmitting ? 'Guardando en Supabase...' : 'Guardar y Agregar al Carrito'}</span>
             </button>
           </div>
         </form>

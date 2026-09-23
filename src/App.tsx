@@ -5,6 +5,7 @@ import { Navbar, NavTab } from './components/layout/Navbar';
 import { POSView } from './views/POSView';
 import { MobileScannerView } from './views/MobileScannerView';
 import { InventoryView } from './views/InventoryView';
+import { PurchasesView } from './views/PurchasesView';
 import { PhysicalAuditView } from './views/PhysicalAuditView';
 import { PriceKioskView } from './views/PriceKioskView';
 import { CashControlView } from './views/CashControlView';
@@ -93,6 +94,7 @@ const MainApp: React.FC = () => {
           <MobileScannerView token="caja-1" onBackToPOS={() => setActiveTab('pos')} />
         )}
         {activeTab === 'inventario' && <InventoryView />}
+        {activeTab === 'compras' && <PurchasesView />}
         {activeTab === 'conteo' && <PhysicalAuditView />}
         {activeTab === 'kiosco' && <PriceKioskView />}
         {activeTab === 'caja' && <CashControlView />}

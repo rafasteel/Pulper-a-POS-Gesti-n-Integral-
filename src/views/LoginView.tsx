@@ -31,7 +31,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccessLogin }) => {
 
   const [activeTab, setActiveTab] = useState<'pin' | 'credentials'>('pin');
   const [pin, setPin] = useState('');
-  const [email, setEmail] = useState('donmanuel@labendicion.com');
+  const [email, setEmail] = useState('admin@pulperia.local');
   const [password, setPassword] = useState('Pulperia123!');
   const [selectedUserId, setSelectedUserId] = useState<string>(users[0]?.id || '');
   const [isLoading, setIsLoading] = useState(false);
@@ -366,17 +366,17 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccessLogin }) => {
               <div className="flex flex-wrap gap-1.5">
                 <button
                   type="button"
-                  onClick={() => quickFillCredentials('donmanuel@labendicion.com', 'Pulperia123!', '11111111-1111-1111-1111-111111111111')}
+                  onClick={() => quickFillCredentials('admin@pulperia.local', 'Pulperia123!', '00000000-0000-0000-0000-000000000001')}
                   className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] border border-slate-700"
                 >
                   Propietario Activo
                 </button>
                 <button
                   type="button"
-                  onClick={() => quickFillCredentials('rosa@labendicion.com', 'Cajera123!', '11111111-1111-1111-1111-111111111111')}
+                  onClick={() => quickFillCredentials('cajero@pulperia.local', 'Cajera123!', '00000000-0000-0000-0000-000000000001')}
                   className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] border border-slate-700"
                 >
-                  Cajera Rosa
+                  Cajero Turno
                 </button>
                 <button
                   type="button"

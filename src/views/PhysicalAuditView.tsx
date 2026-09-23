@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { ClipboardCheck, Barcode, Plus, CheckCircle2, ShieldAlert, RotateCcw } from 'lucide-react';
+import { ClipboardCheck, Barcode, Plus, CheckCircle2, ShieldAlert, RotateCcw, AlertCircle, Loader2 } from 'lucide-react';
 import { Product } from '../types';
 import { soundManager } from '../utils/audioHaptics';
 
 export const PhysicalAuditView: React.FC = () => {
-  const { products, updateProduct, findProductByBarcode, config } = useApp();
+  const { products, applyPhysicalAuditAdjustment, findProductByBarcode, config } = useApp();
 
   // Mapeo local de conteo físico
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [scannedBarcode, setScannedBarcode] = useState('');
   const [adminPin, setAdminPin] = useState('');
   const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleScanSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,28 +42,34 @@ export const PhysicalAuditView: React.FC = () => {
     }));
   };
 
-  const handleApplyAdjustment = () => {
+  const handleApplyAdjustment = async () => {
     if (adminPin !== '1234') {
       soundManager.playError();
-      alert('PIN de Administrador incorrecto (El PIN demo es 1234)');
+      setErrorMessage('PIN de Administrador incorrecto (El PIN demo es 1234)');
       return;
     }
 
-    // Aplicar los ajustes a las existencias reales
-    products.forEach((p: Product) => {
-      if (counts[p.id] !== undefined) {
-        updateProduct({
-          ...p,
-          existenciaBase: counts[p.id],
-        });
-      }
-    });
+    try {
+      setIsSubmitting(true);
+      setErrorMessage(null);
 
-    soundManager.playPaymentSuccess();
-    alert('¡Ajuste de inventario aplicado exitosamente en la base de datos!');
-    setShowApprovalModal(false);
-    setAdminPin('');
-    setCounts({});
+      const res = await applyPhysicalAuditAdjustment(counts, 'Ajuste por conteo físico en pantalla');
+      if (!res.success) {
+        soundManager.playError();
+        setErrorMessage(res.error || 'Error al guardar el ajuste en Supabase');
+        return;
+      }
+
+      soundManager.playPaymentSuccess();
+      setShowApprovalModal(false);
+      setAdminPin('');
+      setCounts({});
+    } catch (err: any) {
+      soundManager.playError();
+      setErrorMessage(err.message || 'Error inesperado al conectar con Supabase');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -231,18 +239,42 @@ export const PhysicalAuditView: React.FC = () => {
               autoFocus
             />
 
+            {/* Alerta de Error Supabase */}
+            {errorMessage && (
+              <div className="p-3 bg-rose-950/80 border-2 border-rose-500/70 rounded-xl flex items-start gap-2.5 text-rose-200 text-xs text-left animate-shake">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <span className="font-bold">Rechazo de Supabase / Base de Datos:</span> {errorMessage}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2 pt-2">
               <button
-                onClick={() => setShowApprovalModal(false)}
-                className="h-10 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold hover:bg-slate-700 transition cursor-pointer"
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => {
+                  setShowApprovalModal(false);
+                  setErrorMessage(null);
+                }}
+                className="h-10 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold hover:bg-slate-700 transition cursor-pointer disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
+                type="button"
+                disabled={isSubmitting}
                 onClick={handleApplyAdjustment}
-                className="h-10 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
+                className="h-10 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold shadow-md transition cursor-pointer flex items-center justify-center gap-1.5"
               >
-                Confirmar
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Guardando...</span>
+                  </>
+                ) : (
+                  <span>Confirmar</span>
+                )}
               </button>
             </div>
           </div>
@@ -251,3 +283,4 @@ export const PhysicalAuditView: React.FC = () => {
     </div>
   );
 };
+

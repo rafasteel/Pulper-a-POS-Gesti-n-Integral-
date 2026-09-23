@@ -13,12 +13,22 @@ import { Product, ProductPresentation, KardexMovement } from '../types';
 import { soundManager } from '../utils/audioHaptics';
 
 export const InventoryView: React.FC = () => {
-  const { products, updateProduct, kardex, config } = useApp();
+  const {
+    products,
+    addPresentationToProduct,
+    deletePresentationFromProduct,
+    quickRegisterProduct,
+    categories,
+    kardex,
+    config,
+  } = useApp();
 
   const [activeTab, setActiveTab] = useState<'catalogo' | 'kardex'>('catalogo');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isEditingPresentations, setIsEditingPresentations] = useState(false);
+  const [presError, setPresError] = useState<string | null>(null);
+  const [isSubmittingPres, setIsSubmittingPres] = useState(false);
 
   // Formulario para nueva presentación
   const [newPresName, setNewPresName] = useState('');
@@ -26,6 +36,20 @@ export const InventoryView: React.FC = () => {
   const [newPresBarcode, setNewPresBarcode] = useState('');
   const [newPresCost, setNewPresCost] = useState('');
   const [newPresPrice, setNewPresPrice] = useState('');
+
+  // Formulario para nuevo producto desde Inventario
+  const [isAddingProduct, setIsAddingProduct] = useState(false);
+  const [newProdError, setNewProdError] = useState<string | null>(null);
+  const [isSubmittingProd, setIsSubmittingProd] = useState(false);
+  const [prodNombre, setProdNombre] = useState('');
+  const [prodCategoriaId, setProdCategoriaId] = useState(categories[0]?.id || '');
+  const [prodUnidad, setProdUnidad] = useState('unidad');
+  const [prodCodigo, setProdCodigo] = useState('');
+  const [prodCosto, setProdCosto] = useState('');
+  const [prodVenta, setProdVenta] = useState('');
+  const [prodStock, setProdStock] = useState('10');
+  const prodMinimo = '5';
+  const prodMaximo = '100';
 
   const filteredProducts = products.filter(
     (p: Product) =>
@@ -40,54 +64,121 @@ export const InventoryView: React.FC = () => {
     return sum + p.existenciaBase * costo;
   }, 0);
 
-  const handleAddPresentation = (e: React.FormEvent) => {
+  const handleAddPresentation = async (e: React.FormEvent) => {
     e.preventDefault();
+    setPresError(null);
     if (!selectedProduct || !newPresName.trim() || !newPresPrice) return;
 
     const factor = parseFloat(newPresFactor) || 1;
     const costo = parseFloat(newPresCost) || 0;
     const venta = parseFloat(newPresPrice) || 0;
 
-    const newPres: ProductPresentation = {
-      id: `pres-${Date.now()}`,
-      productoId: selectedProduct.id,
-      nombre: newPresName.trim(),
-      factorConversion: factor,
-      codigoBarras: newPresBarcode.trim(),
-      precioCosto: costo,
-      precioVenta: venta,
-      esPresentacionBase: false,
-      activo: true,
-    };
+    setIsSubmittingPres(true);
+    try {
+      const res = await addPresentationToProduct(selectedProduct.id, {
+        nombre: newPresName.trim(),
+        factorConversion: factor,
+        codigoBarras: newPresBarcode.trim(),
+        precioCosto: costo,
+        precioVenta: venta,
+      });
 
-    const updated: Product = {
-      ...selectedProduct,
-      presentaciones: [...selectedProduct.presentaciones, newPres],
-    };
+      if (!res.success || !res.presentation) {
+        soundManager.playError();
+        setPresError(`Error de Supabase: ${res.error || 'No se pudo crear la presentación'}`);
+        return;
+      }
 
-    updateProduct(updated);
-    setSelectedProduct(updated);
-    setNewPresName('');
-    setNewPresFactor('1');
-    setNewPresBarcode('');
-    setNewPresCost('');
-    setNewPresPrice('');
-    soundManager.playPaymentSuccess();
+      // Actualizar producto seleccionado en modal
+      setSelectedProduct(prev =>
+        prev
+          ? {
+              ...prev,
+              presentaciones: [...prev.presentaciones, res.presentation!],
+            }
+          : null
+      );
+
+      setNewPresName('');
+      setNewPresFactor('1');
+      setNewPresBarcode('');
+      setNewPresCost('');
+      setNewPresPrice('');
+      soundManager.playPaymentSuccess();
+    } catch (err: any) {
+      soundManager.playError();
+      setPresError(err.message || 'Error inesperado agregando presentación');
+    } finally {
+      setIsSubmittingPres(false);
+    }
   };
 
-  const handleDeletePresentation = (presId: string) => {
+  const handleDeletePresentation = async (presId: string) => {
     if (!selectedProduct) return;
     if (selectedProduct.presentaciones.length <= 1) {
       alert('El producto debe tener al menos una presentación activa');
       return;
     }
-    const updated: Product = {
-      ...selectedProduct,
-      presentaciones: selectedProduct.presentaciones.filter((pr: ProductPresentation) => pr.id !== presId),
-    };
-    updateProduct(updated);
-    setSelectedProduct(updated);
+    const res = await deletePresentationFromProduct(presId);
+    if (!res.success) {
+      soundManager.playError();
+      alert(`Error al eliminar presentación: ${res.error}`);
+      return;
+    }
+
+    setSelectedProduct(prev =>
+      prev
+        ? {
+            ...prev,
+            presentaciones: prev.presentaciones.filter((pr: ProductPresentation) => pr.id !== presId),
+          }
+        : null
+    );
     soundManager.playTouchClick();
+  };
+
+  const handleCreateProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setNewProdError(null);
+    if (!prodNombre.trim() || !prodVenta) {
+      soundManager.playError();
+      setNewProdError('Por favor complete los campos obligatorios (*).');
+      return;
+    }
+
+    setIsSubmittingProd(true);
+    try {
+      const res = await quickRegisterProduct({
+        nombre: prodNombre.trim(),
+        codigoBarras: prodCodigo.trim(),
+        precioCosto: parseFloat(prodCosto) || 0,
+        precioVenta: parseFloat(prodVenta) || 0,
+        categoriaId: prodCategoriaId,
+        stockInicial: parseFloat(prodStock) || 0,
+        unidadMedidaBase: prodUnidad,
+        stockMinimo: parseFloat(prodMinimo) || 5,
+        stockMaximo: parseFloat(prodMaximo) || 100,
+      });
+
+      if (!res.success) {
+        soundManager.playError();
+        setNewProdError(`Error de Supabase: ${res.error || 'No se pudo crear el producto'}`);
+        return;
+      }
+
+      setIsAddingProduct(false);
+      setProdNombre('');
+      setProdCodigo('');
+      setProdCosto('');
+      setProdVenta('');
+      setProdStock('10');
+      soundManager.playPaymentSuccess();
+    } catch (err: any) {
+      soundManager.playError();
+      setNewProdError(err.message || 'Error inesperado creando producto');
+    } finally {
+      setIsSubmittingProd(false);
+    }
   };
 
   return (
@@ -145,16 +236,29 @@ export const InventoryView: React.FC = () => {
       <div className="flex-1 overflow-hidden p-4">
         {activeTab === 'catalogo' ? (
           <div className="h-full flex flex-col gap-3">
-            {/* Buscador */}
-            <div className="relative max-w-md">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Buscar por nombre o código de presentación..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="w-full h-10 pl-9 pr-3 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500"
-              />
+            {/* Buscador & Botón Nuevo Producto */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Buscar por nombre o código de presentación..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="w-full h-10 pl-9 pr-3 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <button
+                onClick={() => {
+                  setNewProdError(null);
+                  setIsAddingProduct(true);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/20 transition active:scale-95 cursor-pointer shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Nuevo Producto (Nube)</span>
+              </button>
             </div>
 
             {/* Tabla de Productos con Presentaciones */}
@@ -378,6 +482,13 @@ export const InventoryView: React.FC = () => {
                 ))}
               </div>
 
+              {presError && (
+                <div className="p-3 mb-3 rounded-xl bg-rose-950/80 border-2 border-rose-500/70 text-rose-200 text-xs flex items-start gap-2">
+                  <span className="text-sm">⚠️</span>
+                  <div className="flex-1 font-semibold">{presError}</div>
+                </div>
+              )}
+
               {/* Formulario para añadir nueva presentación */}
               <form onSubmit={handleAddPresentation} className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-3">
                 <div className="font-bold text-xs text-indigo-300 flex items-center gap-1.5">
@@ -450,14 +561,156 @@ export const InventoryView: React.FC = () => {
                   <div className="flex items-end">
                     <button
                       type="submit"
-                      className="w-full h-8 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition cursor-pointer active:scale-95"
+                      disabled={isSubmittingPres}
+                      className={`w-full h-8 rounded-lg text-white font-bold text-xs transition cursor-pointer active:scale-95 ${
+                        isSubmittingPres
+                          ? 'bg-slate-700 opacity-60 cursor-not-allowed'
+                          : 'bg-indigo-600 hover:bg-indigo-500'
+                      }`}
                     >
-                      Añadir
+                      {isSubmittingPres ? 'Guardando...' : 'Añadir'}
                     </button>
                   </div>
                 </div>
               </form>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Añadir Nuevo Producto (100% Cloud) */}
+      {isAddingProduct && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 select-none">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-4 py-3 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Package className="w-5 h-5 text-emerald-400" />
+                <h2 className="font-bold text-sm text-slate-100">Nuevo Producto en Catálogo Cloud</h2>
+              </div>
+              <button
+                onClick={() => setIsAddingProduct(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {newProdError && (
+              <div className="mx-4 mt-3 p-3 rounded-xl bg-rose-950/80 border-2 border-rose-500/70 text-rose-200 text-xs flex items-start gap-2">
+                <span className="text-sm">⚠️</span>
+                <div className="flex-1 font-semibold">{newProdError}</div>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateProduct} className="p-4 space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">Nombre del Producto *:</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Leche Eskimo Entera 1L"
+                  value={prodNombre}
+                  onChange={e => setProdNombre(e.target.value)}
+                  className="w-full h-9 px-3 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Categoría:</label>
+                  <select
+                    value={prodCategoriaId}
+                    onChange={e => setProdCategoriaId(e.target.value)}
+                    className="w-full h-9 px-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Unidad Base:</label>
+                  <select
+                    value={prodUnidad}
+                    onChange={e => setProdUnidad(e.target.value)}
+                    className="w-full h-9 px-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="unidad">Unidad</option>
+                    <option value="libra">Libra</option>
+                    <option value="kg">Kilogramo</option>
+                    <option value="litro">Litro</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Código de Barras:</label>
+                  <input
+                    type="text"
+                    placeholder="Código de barras..."
+                    value={prodCodigo}
+                    onChange={e => setProdCodigo(e.target.value)}
+                    className="w-full h-9 px-3 bg-slate-950 border border-slate-700 rounded-xl text-xs text-emerald-400 font-mono focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Stock Inicial (Base):</label>
+                  <input
+                    type="number"
+                    value={prodStock}
+                    onChange={e => setProdStock(e.target.value)}
+                    className="w-full h-9 px-3 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Precio Costo ({config.monedaSimbolo}):</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={prodCosto}
+                    onChange={e => setProdCosto(e.target.value)}
+                    className="w-full h-9 px-3 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Precio Venta ({config.monedaSimbolo}) *:</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    placeholder="0.00"
+                    value={prodVenta}
+                    onChange={e => setProdVenta(e.target.value)}
+                    className="w-full h-9 px-3 bg-slate-950 border border-emerald-500/50 rounded-xl text-xs font-bold text-emerald-400 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={isSubmittingProd}
+                  className={`w-full h-11 rounded-xl text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg transition cursor-pointer active:scale-95 ${
+                    isSubmittingProd
+                      ? 'bg-slate-700 opacity-60 cursor-not-allowed'
+                      : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20'
+                  }`}
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>{isSubmittingProd ? 'Guardando en Supabase...' : 'Guardar Producto en Supabase'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

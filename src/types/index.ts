@@ -232,3 +232,43 @@ export interface BusinessConfig {
   supabaseUrl?: string;
   supabaseAnonKey?: string;
 }
+
+export interface Supplier {
+  id: string;
+  negocioId: string;
+  nombreComercial: string;
+  razonSocial?: string;
+  ruc?: string;
+  contactoNombre?: string;
+  telefono?: string;
+  email?: string;
+  direccion?: string;
+  diasCredito: number;
+  saldoPendiente: number;
+  activo: boolean;
+}
+
+export interface PurchaseItem {
+  id?: string;
+  productoId: string;
+  productoNombre?: string;
+  presentacionId: string;
+  presentacionNombre?: string;
+  cantidad: number;
+  factorConversion: number;
+  costoUnitario: number;
+  subtotal: number;
+}
+
+export interface Purchase {
+  id: string;
+  proveedorId: string;
+  proveedorNombre?: string;
+  numeroFactura?: string;
+  fechaEmision: string;
+  tipoPago: 'contado' | 'credito';
+  estado: 'recibida' | 'borrador' | 'cancelada';
+  total: number;
+  observaciones?: string;
+  items: PurchaseItem[];
+}
