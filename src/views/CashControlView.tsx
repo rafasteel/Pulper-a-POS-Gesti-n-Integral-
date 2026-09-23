@@ -8,9 +8,10 @@ import {
   ArrowDownLeft,
   EyeOff,
   FileText,
+  AlertTriangle,
+  X,
 } from 'lucide-react';
 import { CashMovement } from '../types';
-import { soundManager } from '../utils/audioHaptics';
 
 export const CashControlView: React.FC = () => {
   const {
@@ -51,35 +52,74 @@ export const CashControlView: React.FC = () => {
     (billsCount['10'] || 0) * 10 +
     (billsCount['monedas'] || 0);
 
-  const handleOpenShift = (e: React.FormEvent) => {
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleOpenShift = async (e: React.FormEvent) => {
     e.preventDefault();
-    const amt = parseFloat(initialAmountInput) || 0;
-    openCashRegister(amt);
-    soundManager.playPaymentSuccess();
+    setErrorMessage(null);
+    setIsSubmitting(true);
+    try {
+      const amt = parseFloat(initialAmountInput) || 0;
+      const res = await openCashRegister(amt);
+      if (res && !res.success) {
+        setErrorMessage(res.error || 'Error al abrir caja en Supabase');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleAddMovement = (e: React.FormEvent) => {
+  const handleAddMovement = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
     const amt = parseFloat(movementAmount) || 0;
     if (amt <= 0 || !movementReason.trim()) return;
 
-    addCashMovement(movementType, amt, movementReason.trim());
-    setMovementAmount('');
-    setMovementReason('');
-    soundManager.playPaymentSuccess();
+    setIsSubmitting(true);
+    try {
+      const res = await addCashMovement(movementType, amt, movementReason.trim());
+      if (res && !res.success) {
+        setErrorMessage(res.error || 'Error al registrar movimiento en Supabase');
+        return;
+      }
+      setMovementAmount('');
+      setMovementReason('');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleBlindClose = () => {
+  const handleBlindClose = async () => {
     if (declaredCash <= 0 && !window.confirm('¿El conteo declarado es 0.00? ¿Deseas continuar?')) {
       return;
     }
 
-    const report = closeCashRegisterBlind(declaredCash, billsCount, 'Cierre ciego de turno');
+    const report = await closeCashRegisterBlind(declaredCash, billsCount, 'Cierre ciego de turno');
     setLastClosedReport(report);
   };
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-950 overflow-y-auto select-none p-4 space-y-4">
+      {/* Alerta de Error Estricta de Supabase */}
+      {errorMessage && (
+        <div className="bg-rose-950/80 border-2 border-rose-500/70 text-rose-200 p-3.5 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-lg animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
+            <div>
+              <p className="font-bold text-rose-300">Rechazo de Supabase / Base de Datos:</p>
+              <p className="font-mono text-[11px] text-rose-200 mt-0.5">{errorMessage}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setErrorMessage(null)}
+            className="text-rose-400 hover:text-white p-1 rounded-lg hover:bg-rose-900/50 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Cabecera */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-md">
         <div className="flex items-center gap-3">
@@ -140,10 +180,11 @@ export const CashControlView: React.FC = () => {
             </div>
             <button
               type="submit"
-              className="w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer active:scale-95 shadow-lg shadow-emerald-600/20"
+              disabled={isSubmitting}
+              className="w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-slate-950 font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer active:scale-95 shadow-lg shadow-emerald-600/20"
             >
               <Unlock className="w-4 h-4" />
-              <span>Abrir Turno de Caja</span>
+              <span>{isSubmitting ? 'Abriendo Turno en Supabase...' : 'Abrir Turno de Caja'}</span>
             </button>
           </form>
         </div>

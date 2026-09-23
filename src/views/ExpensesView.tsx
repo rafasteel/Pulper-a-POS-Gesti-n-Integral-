@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Receipt, Plus, CheckCircle2 } from 'lucide-react';
+import { Receipt, Plus, CheckCircle2, AlertTriangle, X } from 'lucide-react';
 import { OperationalExpense } from '../types';
-import { soundManager } from '../utils/audioHaptics';
 
 export const ExpensesView: React.FC = () => {
   const { expenses, addExpense, config } = useApp();
@@ -12,23 +11,36 @@ export const ExpensesView: React.FC = () => {
   const [categoria, setCategoria] = useState('servicios');
   const [pagadoDesdeCaja, setPagadoDesdeCaja] = useState(true);
 
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const totalGastos = expenses.reduce((sum: number, e: OperationalExpense) => sum + e.monto, 0);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
     const amt = parseFloat(monto) || 0;
     if (amt <= 0 || !descripcion.trim()) return;
 
-    addExpense({
-      descripcion: descripcion.trim(),
-      monto: amt,
-      categoria,
-      pagadoDesdeCaja,
-    });
+    setIsSubmitting(true);
+    try {
+      const res = await addExpense({
+        descripcion: descripcion.trim(),
+        monto: amt,
+        categoria,
+        pagadoDesdeCaja,
+      });
 
-    soundManager.playPaymentSuccess();
-    setDescripcion('');
-    setMonto('');
+      if (!res.success) {
+        setErrorMessage(res.error || 'Error al guardar gasto en Supabase');
+        return;
+      }
+
+      setDescripcion('');
+      setMonto('');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -61,6 +73,24 @@ export const ExpensesView: React.FC = () => {
             <Plus className="w-4 h-4 text-emerald-400" />
             <span>Nuevo Gasto</span>
           </h2>
+
+          {errorMessage && (
+            <div className="bg-rose-950/80 border-2 border-rose-500/70 text-rose-200 p-3 rounded-xl flex items-center justify-between gap-2 text-xs shadow-md animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <div>
+                  <p className="font-bold text-rose-300">Error en Supabase:</p>
+                  <p className="font-mono text-[10px] text-rose-200 mt-0.5">{errorMessage}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setErrorMessage(null)}
+                className="text-rose-400 hover:text-white p-0.5 rounded cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-3 text-xs">
             <div>
@@ -121,10 +151,11 @@ export const ExpensesView: React.FC = () => {
 
             <button
               type="submit"
-              className="w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md transition cursor-pointer active:scale-95"
+              disabled={isSubmitting}
+              className="w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md transition cursor-pointer active:scale-95"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>Guardar Gasto</span>
+              <span>{isSubmitting ? 'Guardando en Supabase...' : 'Guardar Gasto'}</span>
             </button>
           </form>
         </div>

@@ -1,5 +1,16 @@
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
-import { Product, ProductPresentation, Category, Customer, Sale, UserProfile } from '../types';
+import {
+  Product,
+  ProductPresentation,
+  Category,
+  Customer,
+  Sale,
+  UserProfile,
+  SaaSTenant,
+  CashRegister,
+  CashMovement,
+  OperationalExpense,
+} from '../types';
 
 let supabaseInstance: SupabaseClient | null = null;
 let activeScannerChannel: RealtimeChannel | null = null;
@@ -284,22 +295,564 @@ export const fetchLiveCustomers = async (negocioId?: string): Promise<Customer[]
   }
 };
 
+export const insertLiveCustomer = async (
+  clienteData: {
+    nombre: string;
+    apodo?: string;
+    cedula?: string;
+    telefono?: string;
+    whatsapp?: string;
+    direccion?: string;
+    limiteCredito: number;
+    plazoDias: number;
+  },
+  negocioId: string
+): Promise<{ success: boolean; customer?: Customer; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no está conectado.' };
+
+  if (!isValidUUID(negocioId)) {
+    return { success: false, error: 'ID de negocio inválido para crear cliente.' };
+  }
+
+  try {
+    const payload = {
+      negocio_id: negocioId,
+      nombre: clienteData.nombre,
+      apodo: clienteData.apodo || null,
+      cedula: clienteData.cedula || null,
+      telefono: clienteData.telefono || null,
+      whatsapp: clienteData.whatsapp || null,
+      direccion: clienteData.direccion || null,
+      limite_credito: clienteData.limiteCredito,
+      saldo_deudor_actual: 0.00,
+      plazo_credito_dias: clienteData.plazoDias || 15,
+      bloqueado_por_mora: false,
+      activo: true,
+    };
+
+    console.log('[SupabaseService] Creando nuevo cliente en Supabase:', payload);
+    const { data, error } = await client.from('clientes').insert(payload).select().single();
+
+    if (error) {
+      console.error('[SupabaseService] Error creando cliente:', error);
+      return { success: false, error: error.message };
+    }
+
+    const newCustomer: Customer = {
+      id: data.id,
+      nombre: data.nombre,
+      apodo: data.apodo,
+      cedula: data.cedula,
+      telefono: data.telefono,
+      whatsapp: data.whatsapp,
+      direccion: data.direccion,
+      limiteCredito: Number(data.limite_credito),
+      saldoDeudorActual: Number(data.saldo_deudor_actual || 0),
+      plazoDias: Number(data.plazo_credito_dias),
+      bloqueadoPorMora: Boolean(data.bloqueado_por_mora),
+      activo: Boolean(data.activo),
+    };
+
+    return { success: true, customer: newCustomer };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error inesperado registrando cliente' };
+  }
+};
+
+export const insertLiveCustomerPayment = async (
+  clienteId: string,
+  monto: number,
+  metodo: 'efectivo' | 'transferencia' = 'efectivo',
+  notas?: string,
+  aperturaCajaId?: string,
+  usuarioId?: string
+): Promise<{ success: boolean; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no está conectado.' };
+
+  if (!isValidUUID(clienteId)) {
+    return { success: false, error: 'ID de cliente inválido.' };
+  }
+
+  try {
+    const { data: authData } = await client.auth.getUser();
+    const finalUserId = authData?.user?.id || (isValidUUID(usuarioId) ? usuarioId : null);
+
+    const payload: any = {
+      cliente_id: clienteId,
+      monto,
+      metodo_pago: metodo,
+      notas: notas || 'Abono en mostrador',
+    };
+
+    if (isValidUUID(aperturaCajaId)) {
+      payload.apertura_caja_id = aperturaCajaId;
+    }
+    if (finalUserId) {
+      payload.usuario_id = finalUserId;
+    }
+
+    console.log('[SupabaseService] Registrando abono de fiado en Supabase:', payload);
+    const { error } = await client
+      .from('abonos_cuentas_por_cobrar')
+      .insert(payload);
+
+    if (error) {
+      console.error('[SupabaseService] Error registrando abono en Supabase:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error inesperado registrando abono' };
+  }
+};
+
 export const isValidUUID = (val?: string | null): boolean => {
   if (!val) return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 };
 
-// UUIDs de referencia del Seed para fallback seguro en desarrollo
-const SEED_DEFAULTS = {
-  negocioId: '11111111-1111-1111-1111-111111111111',
-  sucursalId: '11111111-1111-1111-1111-111111111112',
-  cajaId: '11111111-1111-1111-1111-111111111115',
-  aperturaCajaId: 'ap000000-0000-0000-0000-000000000001',
-  cajeroId: 'u0000000-0000-0000-0000-000000000003', // Rosa (Cajera)
+// ==============================================================================
+// 4. NEGOCIOS Y CONTROL DE CAJA EN VIVO (SUPABASE)
+// ==============================================================================
+
+export const fetchLiveTenants = async (): Promise<SaaSTenant[] | null> => {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  try {
+    const { data, error } = await client.from('negocios').select('*').order('created_at');
+    if (error || !data) return null;
+    return data.map((n: any) => ({
+      id: n.id,
+      nombre: n.nombre,
+      nombreComercial: n.nombre_comercial || n.nombre,
+      propietarioNombre: 'Propietario',
+      email: n.email || '',
+      telefono: n.telefono || '',
+      whatsapp: n.whatsapp || '',
+      direccion: n.direccion || '',
+      estadoSuscripcion: n.estado_suscripcion || 'activa',
+      plan: n.plan || 'basico',
+      precioMensual: Number(n.precio_mensual || 15),
+      fechaVencimiento: n.fecha_vencimiento || '2027-12-31',
+      limiteSucursales: n.limite_sucursales || 1,
+      limiteUsuarios: n.limite_usuarios || 3,
+      creadoEn: n.created_at,
+    }));
+  } catch (err) {
+    console.warn('[SupabaseService] Error obteniendo negocios de Supabase:', err);
+    return null;
+  }
+};
+
+export const fetchLiveCashRegister = async (
+  sucursalId?: string
+): Promise<CashRegister | null> => {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    // 1. Obtener la caja activa de la sucursal o la primera caja activa
+    let cajaQuery = client.from('cajas').select('*').eq('activa', true).limit(1);
+    if (sucursalId && isValidUUID(sucursalId)) {
+      cajaQuery = cajaQuery.eq('sucursal_id', sucursalId);
+    }
+    const { data: cajaData, error: cajaError } = await cajaQuery.maybeSingle();
+
+    if (cajaError || !cajaData) {
+      console.log('[SupabaseService] No se encontró ninguna caja activa registrada en Supabase.');
+      return {
+        id: '',
+        nombre: 'Caja Principal (Sin caja en Supabase)',
+        codigo: 'CAJA-01',
+        estado: 'cerrada',
+        aperturaActual: undefined,
+      };
+    }
+
+    // 2. Buscar si esa caja tiene una apertura activa en la BD
+    const { data: aperturaData, error: aperturaError } = await client
+      .from('aperturas_caja')
+      .select(`
+        id,
+        monto_inicial_efectivo,
+        fecha_apertura,
+        usuario_apertura_id,
+        estado
+      `)
+      .eq('caja_id', cajaData.id)
+      .eq('estado', 'abierta')
+      .order('fecha_apertura', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (aperturaError || !aperturaData) {
+      console.log(`[SupabaseService] La caja "${cajaData.nombre}" está CERRADA en Supabase.`);
+      return {
+        id: cajaData.id,
+        nombre: cajaData.nombre,
+        codigo: cajaData.codigo,
+        estado: 'cerrada',
+        aperturaActual: undefined,
+      };
+    }
+
+    console.log(`[SupabaseService] Caja ABIERTA detectada en Supabase (Apertura ID: ${aperturaData.id})`);
+    return {
+      id: cajaData.id,
+      nombre: cajaData.nombre,
+      codigo: cajaData.codigo,
+      estado: 'abierta',
+      aperturaActual: {
+        id: aperturaData.id,
+        usuarioId: aperturaData.usuario_apertura_id,
+        usuarioNombre: 'Cajero Activo',
+        fechaApertura: aperturaData.fecha_apertura,
+        montoInicial: Number(aperturaData.monto_inicial_efectivo || 0),
+      },
+    };
+  } catch (err) {
+    console.error('[SupabaseService] Error obteniendo estado de caja en Supabase:', err);
+    return null;
+  }
+};
+
+export const openLiveCashRegister = async (
+  cajaId?: string,
+  sucursalId?: string,
+  usuarioId?: string,
+  montoInicial: number = 0,
+  notas?: string
+): Promise<{ success: boolean; aperturaId?: string; caja?: any; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no está conectado.' };
+
+  try {
+    let finalCajaId = isValidUUID(cajaId) ? cajaId : null;
+
+    // 1. Si no hay cajaId, buscar la caja activa por sucursal_id
+    if (!finalCajaId && sucursalId && isValidUUID(sucursalId)) {
+      const { data: sucursalCaja } = await client
+        .from('cajas')
+        .select('*')
+        .eq('sucursal_id', sucursalId)
+        .eq('activa', true)
+        .limit(1)
+        .maybeSingle();
+
+      if (sucursalCaja && isValidUUID(sucursalCaja.id)) {
+        finalCajaId = sucursalCaja.id;
+      }
+    }
+
+    // 2. Si todavía no se encuentra, buscar cualquier caja activa
+    if (!finalCajaId) {
+      const { data: firstCaja } = await client.from('cajas').select('*').eq('activa', true).limit(1).maybeSingle();
+      if (firstCaja && isValidUUID(firstCaja.id)) {
+        finalCajaId = firstCaja.id;
+      }
+    }
+
+    if (!finalCajaId) {
+      return {
+        success: false,
+        error: 'No hay ninguna caja creada en la tabla "cajas" de Supabase. Crea una caja primero.',
+      };
+    }
+
+    // Obtener información de la caja para retornar al estado
+    const { data: cajaInfo } = await client.from('cajas').select('*').eq('id', finalCajaId).single();
+
+    // 3. Resolver usuario_apertura_id (autenticado de auth.users si existe, o null si es PIN local)
+    const { data: authData } = await client.auth.getUser();
+    const finalUserId = authData?.user?.id || (isValidUUID(usuarioId) ? usuarioId : null);
+
+    const payload: any = {
+      caja_id: finalCajaId,
+      monto_inicial_efectivo: montoInicial,
+      estado: 'abierta',
+      notas: notas || 'Apertura de turno desde POS',
+    };
+    if (finalUserId) {
+      payload.usuario_apertura_id = finalUserId;
+    }
+
+    console.log('[SupabaseService] Insertando apertura_caja:', payload);
+    const { data, error } = await client
+      .from('aperturas_caja')
+      .insert(payload)
+      .select('id, caja_id, monto_inicial_efectivo, fecha_apertura')
+      .single();
+
+    if (error) {
+      console.error('[SupabaseService] Error abriendo turno de caja en Supabase:', error);
+      return { success: false, error: error.message };
+    }
+
+    console.log('[SupabaseService] Apertura de caja exitosa en Supabase, ID:', data.id);
+    return { success: true, aperturaId: data.id, caja: cajaInfo };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error inesperado abriendo caja' };
+  }
 };
 
 // ==============================================================================
-// 4. REGISTRO REAL DE VENTA EN SUPABASE (INSERT TRANSACCIONAL ESTRICTO)
+// 4.1. MOVIMIENTOS DE CAJA (INGRESOS Y RETIROS MANUALES)
+// ==============================================================================
+
+export const insertLiveCashMovement = async (
+  aperturaCajaId: string,
+  tipo: 'entrada_efectivo' | 'retiro_gasto' | 'retiro_deposito',
+  monto: number,
+  motivo: string,
+  usuarioId?: string
+): Promise<{ success: boolean; data?: any; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no está conectado.' };
+
+  if (!isValidUUID(aperturaCajaId)) {
+    return {
+      success: false,
+      error: 'No se puede registrar movimiento sin un turno de apertura de caja válido.',
+    };
+  }
+
+  try {
+    const { data: authData } = await client.auth.getUser();
+    const finalUserId = authData?.user?.id || (isValidUUID(usuarioId) ? usuarioId : null);
+
+    const payload: any = {
+      apertura_caja_id: aperturaCajaId,
+      tipo,
+      monto,
+      motivo,
+    };
+    if (finalUserId) {
+      payload.usuario_id = finalUserId;
+    }
+
+    console.log('[SupabaseService] Insertando movimiento_caja:', payload);
+    const { data, error } = await client.from('movimientos_caja').insert(payload).select().single();
+
+    if (error) {
+      console.error('[SupabaseService] Error insertando movimiento_caja:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error inesperado registrando movimiento de caja' };
+  }
+};
+
+export const fetchLiveCashMovements = async (
+  aperturaCajaId?: string
+): Promise<CashMovement[] | null> => {
+  const client = getSupabaseClient();
+  if (!client || !aperturaCajaId || !isValidUUID(aperturaCajaId)) return null;
+
+  try {
+    const { data, error } = await client
+      .from('movimientos_caja')
+      .select('*')
+      .eq('apertura_caja_id', aperturaCajaId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    return (data || []).map((m: any) => ({
+      id: m.id,
+      aperturaId: m.apertura_caja_id,
+      tipo: m.tipo,
+      monto: Number(m.monto),
+      motivo: m.motivo,
+      usuarioNombre: 'Cajero',
+      fecha: m.created_at,
+    }));
+  } catch (err) {
+    console.error('[SupabaseService] Error consultando movimientos_caja:', err);
+    return null;
+  }
+};
+
+// ==============================================================================
+// 4.2. GASTOS OPERATIVOS (INSERT & SELECT)
+// ==============================================================================
+
+export const insertLiveExpense = async (
+  expenseData: {
+    descripcion: string;
+    monto: number;
+    categoria: string;
+    pagadoDesdeCaja?: boolean;
+    comprobanteUrl?: string;
+  },
+  negocioId: string,
+  sucursalId?: string,
+  aperturaCajaId?: string,
+  usuarioId?: string
+): Promise<{ success: boolean; data?: any; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no está conectado.' };
+
+  if (!isValidUUID(negocioId)) {
+    return { success: false, error: 'ID de negocio inválido para registrar gasto.' };
+  }
+
+  try {
+    let finalSucursalId = isValidUUID(sucursalId) ? sucursalId : null;
+    if (!finalSucursalId) {
+      const { data: firstSuc } = await client
+        .from('sucursales')
+        .select('id')
+        .eq('negocio_id', negocioId)
+        .limit(1)
+        .maybeSingle();
+
+      if (firstSuc && isValidUUID(firstSuc.id)) {
+        finalSucursalId = firstSuc.id;
+      }
+    }
+
+    if (!finalSucursalId) {
+      return {
+        success: false,
+        error: 'No se encontró una sucursal válida para asociar el gasto.',
+      };
+    }
+
+    const { data: authData } = await client.auth.getUser();
+    const finalUserId = authData?.user?.id || (isValidUUID(usuarioId) ? usuarioId : null);
+
+    const payload: any = {
+      negocio_id: negocioId,
+      sucursal_id: finalSucursalId,
+      descripcion: expenseData.descripcion,
+      monto: expenseData.monto,
+      categoria: expenseData.categoria || 'otros',
+      pagado_desde_caja: expenseData.pagadoDesdeCaja ?? true,
+      comprobante_url: expenseData.comprobanteUrl || null,
+      fecha_gasto: new Date().toISOString().split('T')[0],
+    };
+
+    if (isValidUUID(aperturaCajaId)) {
+      payload.apertura_caja_id = aperturaCajaId;
+    }
+    if (finalUserId) {
+      payload.usuario_id = finalUserId;
+    }
+
+    console.log('[SupabaseService] Insertando gasto operativo:', payload);
+    const { data, error } = await client.from('gastos').insert(payload).select().single();
+
+    if (error) {
+      console.error('[SupabaseService] Error insertando gasto en Supabase:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error inesperado registrando gasto' };
+  }
+};
+
+export const fetchLiveExpenses = async (
+  negocioId?: string,
+  sucursalId?: string
+): Promise<OperationalExpense[] | null> => {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    let query = client.from('gastos').select('*').order('created_at', { ascending: false });
+    if (negocioId && isValidUUID(negocioId)) {
+      query = query.eq('negocio_id', negocioId);
+    }
+    if (sucursalId && isValidUUID(sucursalId)) {
+      query = query.eq('sucursal_id', sucursalId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return (data || []).map((g: any) => ({
+      id: g.id,
+      descripcion: g.descripcion,
+      monto: Number(g.monto),
+      categoria: g.categoria,
+      pagadoDesdeCaja: Boolean(g.pagado_desde_caja),
+      fecha: g.created_at || g.fecha_gasto,
+      usuarioNombre: 'Cajero / Admin',
+    }));
+  } catch (err) {
+    console.error('[SupabaseService] Error consultando gastos:', err);
+    return null;
+  }
+};
+
+export const closeLiveCashRegister = async (
+  aperturaId: string,
+  usuarioId: string,
+  montoDeclarado: number,
+  montoEsperado: number,
+  diferencia: number,
+  desglose?: any,
+  notas?: string
+): Promise<{ success: boolean; error?: string }> => {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, error: 'Supabase no está conectado.' };
+
+  try {
+    if (!isValidUUID(aperturaId)) {
+      return { success: false, error: 'ID de apertura de caja inválido.' };
+    }
+
+    const { data: authData } = await client.auth.getUser();
+    const finalUserId = authData?.user?.id || (isValidUUID(usuarioId) ? usuarioId : null);
+
+    if (!finalUserId) {
+      return {
+        success: false,
+        error: 'No se puede cerrar caja en Supabase sin un usuario autenticado válido.',
+      };
+    }
+
+    // 1. Marcar apertura_caja como cerrada
+    const { error: updateError } = await client
+      .from('aperturas_caja')
+      .update({ estado: 'cerrada' })
+      .eq('id', aperturaId);
+
+    if (updateError) {
+      console.error('[SupabaseService] Error actualizando aperturas_caja:', updateError);
+      return { success: false, error: updateError.message };
+    }
+
+    // 2. Registrar en cierres_caja
+    const { error: insertCloseError } = await client.from('cierres_caja').insert({
+      apertura_id: aperturaId,
+      usuario_cierre_id: finalUserId,
+      monto_declarado_efectivo: montoDeclarado,
+      monto_esperado_efectivo: montoEsperado,
+      diferencia_efectivo: diferencia,
+      desglose_monedas_billetes: desglose || null,
+      notas_cajero: notas || null,
+    });
+
+    if (insertCloseError) {
+      console.warn('[SupabaseService] Advertencia en cierres_caja:', insertCloseError);
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error cerrando caja' };
+  }
+};
+
+// ==============================================================================
+// 5. REGISTRO REAL DE VENTA EN SUPABASE (INSERT TRANSACCIONAL ESTRICTO)
 // ==============================================================================
 
 export const insertLiveSale = async (
@@ -314,23 +867,14 @@ export const insertLiveSale = async (
     return { success: false, error: 'Supabase no conectado o credenciales no configuradas.' };
   }
 
-  console.log('[SupabaseService] === INICIANDO PROCESO DE VENTA EN SUPABASE ===');
-  console.log('[SupabaseService] Parámetros recibidos:', {
-    ticket: sale.numeroTicket,
-    total: sale.total,
-    itemsCount: sale.items.length,
-    negocioIdParam: negocioId,
-    sucursalIdParam: sucursalId,
-    aperturaCajaIdParam: aperturaCajaId,
-    cajeroIdParam: sale.cajeroId,
-  });
+  console.log('[SupabaseService] === INICIANDO VALIDACIÓN ESTRICTA DE VENTA ===');
 
   try {
-    // 0. Obtener el usuario autenticado actualmente en la sesión de Supabase
+    // 0. Obtener usuario autenticado en Supabase si existe
     const { data: authData } = await client.auth.getUser();
     const authUser = authData?.user;
 
-    // A. Resolver negocio_id (debe ser un UUID válido existente)
+    // A. Resolver y validar negocio_id real
     let finalNegocioId = isValidUUID(negocioId) ? negocioId : null;
     let userProfile: any = null;
 
@@ -350,12 +894,17 @@ export const insertLiveSale = async (
       const { data: firstNeg } = await client.from('negocios').select('id').limit(1).maybeSingle();
       if (firstNeg && isValidUUID(firstNeg.id)) {
         finalNegocioId = firstNeg.id;
-      } else {
-        finalNegocioId = SEED_DEFAULTS.negocioId;
       }
     }
 
-    // B. Resolver sucursal_id
+    if (!finalNegocioId || !isValidUUID(finalNegocioId)) {
+      return {
+        success: false,
+        error: 'No se encontró un ID de Negocio (UUID) válido en Supabase. Debes crear un negocio primero.',
+      };
+    }
+
+    // B. Resolver y validar sucursal_id real
     let finalSucursalId = isValidUUID(sucursalId) ? sucursalId : null;
     if (!finalSucursalId && userProfile && isValidUUID(userProfile.sucursal_id)) {
       finalSucursalId = userProfile.sucursal_id;
@@ -369,15 +918,19 @@ export const insertLiveSale = async (
         .maybeSingle();
       if (branch && isValidUUID(branch.id)) {
         finalSucursalId = branch.id;
-      } else {
-        finalSucursalId = SEED_DEFAULTS.sucursalId;
       }
     }
 
-    // C. Resolver apertura_caja_id
+    if (!finalSucursalId || !isValidUUID(finalSucursalId)) {
+      return {
+        success: false,
+        error: 'No se encontró una Sucursal (UUID) válida en Supabase para este negocio. Debes dar de alta una sucursal.',
+      };
+    }
+
+    // C. Resolver y validar apertura_caja_id real
     let finalAperturaCajaId = isValidUUID(aperturaCajaId) ? aperturaCajaId : null;
     if (!finalAperturaCajaId) {
-      // 1. Buscar si hay una apertura de caja con estado 'abierta'
       const { data: activeApertura } = await client
         .from('aperturas_caja')
         .select('id')
@@ -388,35 +941,42 @@ export const insertLiveSale = async (
 
       if (activeApertura && isValidUUID(activeApertura.id)) {
         finalAperturaCajaId = activeApertura.id;
-      } else {
-        // 2. Buscar cualquier apertura registrada
-        const { data: anyApertura } = await client
-          .from('aperturas_caja')
-          .select('id')
-          .order('fecha_apertura', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (anyApertura && isValidUUID(anyApertura.id)) {
-          finalAperturaCajaId = anyApertura.id;
-        } else {
-          finalAperturaCajaId = SEED_DEFAULTS.aperturaCajaId;
-        }
       }
     }
 
-    // D. Resolver cajero_id (debe apuntar a auth.users si la FK es estricta)
+    if (!finalAperturaCajaId || !isValidUUID(finalAperturaCajaId)) {
+      return {
+        success: false,
+        error: 'No hay ningún turno de caja abierto en Supabase. Debes abrir caja primero en el panel de Control de Caja.',
+      };
+    }
+
+    // D. Resolver cajero_id
     let finalCajeroId: string | null = null;
     if (authUser && isValidUUID(authUser.id)) {
       finalCajeroId = authUser.id;
     } else if (isValidUUID(sale.cajeroId)) {
       finalCajeroId = sale.cajeroId;
-    } else {
-      finalCajeroId = SEED_DEFAULTS.cajeroId;
     }
 
     // E. Resolver cliente_id
     const finalClienteId = isValidUUID(sale.clienteId) ? sale.clienteId : null;
+
+    // F. Validar estrictamente los productos y presentaciones del carrito
+    for (const item of sale.items) {
+      if (!isValidUUID(item.producto.id)) {
+        return {
+          success: false,
+          error: `El producto "${item.producto.nombre}" tiene un ID simulado (${item.producto.id}). Solo se permiten productos reales con UUID de Supabase.`,
+        };
+      }
+      if (!isValidUUID(item.presentacion.id)) {
+        return {
+          success: false,
+          error: `La presentación "${item.presentacion.nombre}" del producto "${item.producto.nombre}" tiene un ID simulado (${item.presentacion.id}). Debe provenir de la tabla "presentaciones_producto" de Supabase.`,
+        };
+      }
+    }
 
     // 1. Preparar Payload del Encabezado de Venta
     const ventaPayload = {
@@ -437,9 +997,8 @@ export const insertLiveSale = async (
       notas: sale.notas || null,
     };
 
-    console.log('[SupabaseService] Payload a insertar en tabla "ventas":', ventaPayload);
+    console.log('[SupabaseService] Insertando venta real en "ventas":', ventaPayload);
 
-    // Inserción en tabla 'ventas'
     const { data: ventaData, error: ventaError } = await client
       .from('ventas')
       .insert(ventaPayload)
@@ -467,70 +1026,20 @@ export const insertLiveSale = async (
 
     const newVentaId = ventaData.id;
 
-    // 2. Preparar e Insertar Detalles de Venta ('venta_detalles')
-    const detallesToInsert = await Promise.all(
-      sale.items.map(async item => {
-        let prodId = isValidUUID(item.producto.id) ? item.producto.id : null;
-        let presId = isValidUUID(item.presentacion.id) ? item.presentacion.id : null;
+    // 2. Insertar Detalles de Venta ('venta_detalles')
+    const detallesToInsert = sale.items.map(item => ({
+      venta_id: newVentaId,
+      producto_id: item.producto.id,
+      presentacion_id: item.presentacion.id,
+      cantidad: item.cantidad,
+      factor_conversion: item.presentacion.factorConversion,
+      precio_unitario: item.precioUnitario,
+      costo_unitario_base: item.costoUnitarioBase,
+      descuento_unitario: item.descuentoUnitario,
+      subtotal: item.subtotal,
+    }));
 
-        // Si los IDs son mocks locales (e.g. 'p-coca-3l'), buscar correspondencia en la BD por código de barras o nombre
-        if (!presId && item.presentacion.codigoBarras) {
-          const { data: pMatch } = await client
-            .from('presentaciones_producto')
-            .select('id, producto_id')
-            .eq('codigo_barras', item.presentacion.codigoBarras)
-            .limit(1)
-            .maybeSingle();
-
-          if (pMatch) {
-            presId = pMatch.id;
-            prodId = prodId || pMatch.producto_id;
-          }
-        }
-
-        if (!prodId) {
-          const { data: prodMatch } = await client
-            .from('productos')
-            .select('id, presentaciones_producto(id)')
-            .ilike('nombre', `%${item.producto.nombre.split(' ')[0]}%`)
-            .limit(1)
-            .maybeSingle();
-
-          if (prodMatch) {
-            prodId = prodMatch.id;
-            if (!presId && prodMatch.presentaciones_producto?.[0]?.id) {
-              presId = prodMatch.presentaciones_producto[0].id;
-            }
-          }
-        }
-
-        // Si aún no se resuelven los UUIDs, usar el primer producto de la base de datos para no violar FK
-        if (!prodId) prodId = 'p0000000-0000-0000-0000-000000000001';
-        if (!presId) {
-          const { data: fallbackPres } = await client
-            .from('presentaciones_producto')
-            .select('id')
-            .eq('producto_id', prodId)
-            .limit(1)
-            .maybeSingle();
-          presId = fallbackPres?.id || null;
-        }
-
-        return {
-          venta_id: newVentaId,
-          producto_id: prodId,
-          presentacion_id: presId,
-          cantidad: item.cantidad,
-          factor_conversion: item.presentacion.factorConversion,
-          precio_unitario: item.precioUnitario,
-          costo_unitario_base: item.costoUnitarioBase,
-          descuento_unitario: item.descuentoUnitario,
-          subtotal: item.subtotal,
-        };
-      })
-    );
-
-    console.log('[SupabaseService] Payload a insertar en "venta_detalles":', detallesToInsert);
+    console.log('[SupabaseService] Insertando detalles en "venta_detalles":', detallesToInsert);
     const { data: detallesData, error: detallesError } = await client
       .from('venta_detalles')
       .insert(detallesToInsert)
@@ -567,7 +1076,7 @@ export const insertLiveSale = async (
         .filter(p => Boolean(p.metodo_pago_id));
 
       if (pagosToInsert.length > 0) {
-        console.log('[SupabaseService] Payload a insertar en "pagos_venta":', pagosToInsert);
+        console.log('[SupabaseService] Insertando pagos en "pagos_venta":', pagosToInsert);
         const { data: pagosData, error: pagosError } = await client
           .from('pagos_venta')
           .insert(pagosToInsert)
@@ -601,7 +1110,7 @@ export const insertLiveSale = async (
       }
     }
 
-    console.log('[SupabaseService] ¡Venta registrada con éxito total en Supabase! ID:', newVentaId);
+    console.log('[SupabaseService] ¡Venta real registrada con éxito en Supabase! ID:', newVentaId);
     return { success: true, saleId: newVentaId };
   } catch (err: any) {
     console.error('[SupabaseService] Excepción crítica durante insertLiveSale:', err);

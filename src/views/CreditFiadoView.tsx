@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Lock,
   X,
+  AlertTriangle,
 } from 'lucide-react';
 import { Customer } from '../types';
 import { soundManager } from '../utils/audioHaptics';
@@ -38,35 +39,60 @@ export const CreditFiadoView: React.FC = () => {
 
   const selectedCustomer = customers.find((c: Customer) => c.id === selectedCustomerId);
 
-  const handlePaymentSubmit = (e: React.FormEvent) => {
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [customerError, setCustomerError] = useState<string | null>(null);
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const [isSubmittingCustomer, setIsSubmittingCustomer] = useState(false);
+
+  const handlePaymentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setPaymentError(null);
     if (!selectedCustomerId || !paymentAmount) return;
 
     const amt = parseFloat(paymentAmount) || 0;
     if (amt <= 0) return;
 
-    registerCustomerPayment(selectedCustomerId, amt, paymentMethod, 'Abono en mostrador');
-    setPaymentAmount('');
+    setIsSubmittingPayment(true);
+    try {
+      const res = await registerCustomerPayment(selectedCustomerId, amt, paymentMethod, 'Abono en mostrador');
+      if (res && !res.success) {
+        setPaymentError(res.error || 'Error al registrar abono en Supabase');
+        return;
+      }
+      setPaymentAmount('');
+    } finally {
+      setIsSubmittingPayment(false);
+    }
   };
 
-  const handleCreateCustomer = (e: React.FormEvent) => {
+  const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCustomerError(null);
     if (!newCustName.trim()) return;
 
-    addNewCustomer({
-      nombre: newCustName.trim(),
-      apodo: newCustNickname.trim() || undefined,
-      telefono: newCustPhone.trim() || undefined,
-      whatsapp: newCustPhone.trim().replace(/[^0-9]/g, '') || undefined,
-      limiteCredito: parseFloat(newCustLimit) || 500,
-      plazoDias: parseInt(newCustDays) || 15,
-    });
+    setIsSubmittingCustomer(true);
+    try {
+      const res = await addNewCustomer({
+        nombre: newCustName.trim(),
+        apodo: newCustNickname.trim() || undefined,
+        telefono: newCustPhone.trim() || undefined,
+        whatsapp: newCustPhone.trim().replace(/[^0-9]/g, '') || undefined,
+        limiteCredito: parseFloat(newCustLimit) || 500,
+        plazoDias: parseInt(newCustDays) || 15,
+      });
 
-    soundManager.playPaymentSuccess();
-    setIsAddCustomerOpen(false);
-    setNewCustName('');
-    setNewCustNickname('');
-    setNewCustPhone('');
+      if (res && !res.success) {
+        setCustomerError(res.error || 'Error al guardar cliente en Supabase');
+        return;
+      }
+
+      setIsAddCustomerOpen(false);
+      setNewCustName('');
+      setNewCustNickname('');
+      setNewCustPhone('');
+    } finally {
+      setIsSubmittingCustomer(false);
+    }
   };
 
   const getWhatsAppStatementUrl = (cust: Customer) => {
@@ -245,6 +271,25 @@ export const CreditFiadoView: React.FC = () => {
                 <form onSubmit={handlePaymentSubmit} className="space-y-3 pt-2">
                   <h4 className="font-bold text-xs text-slate-300">Registrar Abono a la Deuda:</h4>
 
+                  {paymentError && (
+                    <div className="bg-rose-950/80 border border-rose-500/70 text-rose-200 p-2.5 rounded-xl flex items-center justify-between gap-2 text-xs shadow-md animate-in fade-in">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                        <div>
+                          <p className="font-bold text-rose-300">Error en Supabase:</p>
+                          <p className="font-mono text-[10px] text-rose-200 mt-0.5">{paymentError}</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPaymentError(null)}
+                        className="text-rose-400 hover:text-white p-0.5 rounded cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -297,10 +342,11 @@ export const CreditFiadoView: React.FC = () => {
 
                   <button
                     type="submit"
-                    className="w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition cursor-pointer active:scale-95"
+                    disabled={isSubmittingPayment}
+                    className="w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition cursor-pointer active:scale-95"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>Confirmar Abono y Rebajar Saldo</span>
+                    <span>{isSubmittingPayment ? 'Registrando en Supabase...' : 'Confirmar Abono y Rebajar Saldo'}</span>
                   </button>
                 </form>
               </div>
@@ -334,10 +380,29 @@ export const CreditFiadoView: React.FC = () => {
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4">
             <div className="flex justify-between items-center pb-2 border-b border-slate-800">
               <h3 className="font-bold text-sm text-white">Dar de Alta a Nuevo Cliente</h3>
-              <button onClick={() => setIsAddCustomerOpen(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setIsAddCustomerOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {customerError && (
+              <div className="bg-rose-950/80 border border-rose-500/70 text-rose-200 p-2.5 rounded-xl flex items-center justify-between gap-2 text-xs shadow-md animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <div>
+                    <p className="font-bold text-rose-300">Error en Supabase:</p>
+                    <p className="font-mono text-[10px] text-rose-200 mt-0.5">{customerError}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCustomerError(null)}
+                  className="text-rose-400 hover:text-white p-0.5 rounded cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleCreateCustomer} className="space-y-3 text-xs">
               <div>
@@ -398,9 +463,10 @@ export const CreditFiadoView: React.FC = () => {
 
               <button
                 type="submit"
-                className="w-full h-10 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition cursor-pointer"
+                disabled={isSubmittingCustomer}
+                className="w-full h-10 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs transition cursor-pointer"
               >
-                Guardar Cliente
+                {isSubmittingCustomer ? 'Guardando en Supabase...' : 'Guardar Cliente'}
               </button>
             </form>
           </div>

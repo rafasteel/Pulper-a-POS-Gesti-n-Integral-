@@ -20,7 +20,7 @@ interface POSViewProps {
 }
 
 export const POSView: React.FC<POSViewProps> = ({ onSwitchToMobileScanner }) => {
-  const { findProductByBarcode, addToCart, cart, pauseCart } = useApp();
+  const { findProductByBarcode, addToCart, cart, pauseCart, cashRegister } = useApp();
 
   const [barcodeInput, setBarcodeInput] = useState('');
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
@@ -32,12 +32,21 @@ export const POSView: React.FC<POSViewProps> = ({ onSwitchToMobileScanner }) => 
 
   const barcodeInputRef = useRef<HTMLInputElement>(null);
 
+  const handleOpenPayment = () => {
+    if (cashRegister.estado !== 'abierta' || !cashRegister.aperturaActual?.id) {
+      soundManager.playError();
+      alert('Debes abrir caja primero antes de poder cobrar.');
+      return;
+    }
+    setIsPaymentOpen(true);
+  };
+
   // Atajos de teclado globales (F12 Cobrar, F6 Pausar, F2 Buscar código)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F12') {
         e.preventDefault();
-        if (cart.length > 0) setIsPaymentOpen(true);
+        if (cart.length > 0) handleOpenPayment();
       } else if (e.key === 'F6') {
         e.preventDefault();
         if (cart.length > 0) pauseCart();
@@ -49,7 +58,7 @@ export const POSView: React.FC<POSViewProps> = ({ onSwitchToMobileScanner }) => 
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cart, pauseCart]);
+  }, [cart, pauseCart, cashRegister]);
 
   // Manejador del escáner de código de barras (USB o manual)
   const handleBarcodeSubmit = (e: React.FormEvent) => {
@@ -162,7 +171,7 @@ export const POSView: React.FC<POSViewProps> = ({ onSwitchToMobileScanner }) => 
 
           {/* Resumen y Botón de Cobro */}
           <CartSummary
-            onOpenPaymentModal={() => setIsPaymentOpen(true)}
+            onOpenPaymentModal={handleOpenPayment}
             onOpenPauseModal={() => pauseCart()}
           />
         </div>

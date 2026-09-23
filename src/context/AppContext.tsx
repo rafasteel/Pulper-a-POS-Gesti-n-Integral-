@@ -20,9 +20,6 @@ import {
 import {
   INITIAL_CONFIG,
   INITIAL_USERS,
-  INITIAL_CATEGORIES,
-  INITIAL_PRODUCTS,
-  INITIAL_CUSTOMERS,
   INITIAL_REGISTER,
   INITIAL_TENANTS,
 } from '../utils/mockData';
@@ -36,6 +33,17 @@ import {
   fetchLiveCatalog,
   fetchLiveCustomers,
   insertLiveSale,
+  fetchLiveTenants,
+  fetchLiveCashRegister,
+  openLiveCashRegister,
+  closeLiveCashRegister,
+  insertLiveCashMovement,
+  fetchLiveCashMovements,
+  insertLiveExpense,
+  fetchLiveExpenses,
+  insertLiveCustomer,
+  insertLiveCustomerPayment,
+  isValidUUID,
 } from '../services/supabaseService';
 
 interface HeldCart {
@@ -116,16 +124,16 @@ interface AppContextType {
   updateProduct: (product: Product) => void;
 
   // Cash Operations
-  addCashMovement: (tipo: 'entrada_efectivo' | 'retiro_gasto' | 'retiro_deposito', monto: number, motivo: string) => void;
-  closeCashRegisterBlind: (montoDeclarado: number, desglose?: Record<string, number>, notas?: string) => CashClosingReport;
-  openCashRegister: (montoInicial: number) => void;
+  addCashMovement: (tipo: 'entrada_efectivo' | 'retiro_gasto' | 'retiro_deposito', monto: number, motivo: string) => Promise<{ success: boolean; error?: string }>;
+  closeCashRegisterBlind: (montoDeclarado: number, desglose?: Record<string, number>, notas?: string) => Promise<CashClosingReport>;
+  openCashRegister: (montoInicial: number) => Promise<{ success: boolean; error?: string }>;
 
   // Credit & Fiado
-  registerCustomerPayment: (clienteId: string, monto: number, metodo: 'efectivo' | 'transferencia', notas?: string) => void;
-  addNewCustomer: (cliente: Omit<Customer, 'id' | 'saldoDeudorActual' | 'bloqueadoPorMora' | 'activo'>) => Customer;
+  registerCustomerPayment: (clienteId: string, monto: number, metodo?: 'efectivo' | 'transferencia', notas?: string) => Promise<{ success: boolean; error?: string }>;
+  addNewCustomer: (cliente: Omit<Customer, 'id' | 'saldoDeudorActual' | 'bloqueadoPorMora' | 'activo'>) => Promise<{ success: boolean; customer?: Customer; error?: string }>;
 
   // Expenses
-  addExpense: (expense: Omit<OperationalExpense, 'id' | 'usuarioNombre' | 'fecha'>) => void;
+  addExpense: (expense: Omit<OperationalExpense, 'id' | 'usuarioNombre' | 'fecha'>) => Promise<{ success: boolean; error?: string }>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -163,19 +171,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { ...base, nombreNegocio: currentTenant.nombre };
   });
 
-  const [categories, setCategories] = useState<Category[]>(INITIAL_CATEGORIES);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem('pulperia_products');
-    return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.every((p: any) => isValidUUID(p.id))) {
+          return parsed;
+        }
+      } catch (e) {
+        // ignore error
+      }
+    }
+    localStorage.removeItem('pulperia_products');
+    return [];
   });
   const [customers, setCustomers] = useState<Customer[]>(() => {
     const saved = localStorage.getItem('pulperia_customers');
-    return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.every((c: any) => isValidUUID(c.id))) {
+          return parsed;
+        }
+      } catch (e) {
+        // ignore error
+      }
+    }
+    localStorage.removeItem('pulperia_customers');
+    return [];
   });
   const [cashRegister, setCashRegister] = useState<CashRegister>(INITIAL_REGISTER);
   const [cart, setCart] = useState<CartItem[]>(() => {
     const saved = localStorage.getItem('pulperia_cart');
-    return saved ? JSON.parse(saved) : [];
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (
+          Array.isArray(parsed) &&
+          parsed.every((item: any) => isValidUUID(item.id) && isValidUUID(item.productoId))
+        ) {
+          return parsed;
+        }
+      } catch (e) {
+        // ignore error
+      }
+    }
+    localStorage.removeItem('pulperia_cart');
+    return [];
   });
   const [heldCarts, setHeldCarts] = useState<HeldCart[]>(() => {
     const saved = localStorage.getItem('pulperia_held_carts');
@@ -280,17 +324,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!isSupabaseConfigured()) return;
     setIsLoadingLiveCatalog(true);
     try {
+      // 1. Sincronizar catálogo real de Supabase (sin fallback a mock data)
       const liveData = await fetchLiveCatalog(currentTenantId);
-      if (liveData && liveData.products.length > 0) {
+      if (liveData) {
         setProducts(liveData.products);
         setCategories(liveData.categories);
       }
+      
+      // 2. Sincronizar clientes reales de Supabase
       const liveCustomers = await fetchLiveCustomers(currentTenantId);
-      if (liveCustomers && liveCustomers.length > 0) {
+      if (liveCustomers) {
         setCustomers(liveCustomers);
       }
+
+      // 3. Sincronizar negocios/tenants de Supabase
+      const liveTenants = await fetchLiveTenants();
+      if (liveTenants && liveTenants.length > 0) {
+        setTenants(liveTenants);
+      }
+
+      // 4. Sincronizar estado de apertura de caja de la sucursal activa
+      const activeSucursalId = currentUser.sucursalId;
+      const liveRegister = await fetchLiveCashRegister(activeSucursalId);
+      if (liveRegister) {
+        setCashRegister(liveRegister);
+        if (liveRegister.aperturaActual?.id) {
+          const liveMovs = await fetchLiveCashMovements(liveRegister.aperturaActual.id);
+          if (liveMovs) {
+            setCashMovements(liveMovs);
+          }
+        }
+      }
+
+      // 5. Sincronizar gastos operativos de Supabase
+      const liveExpenses = await fetchLiveExpenses(currentTenantId, activeSucursalId);
+      if (liveExpenses) {
+        setExpenses(liveExpenses);
+      }
     } catch (err) {
-      console.warn('Aviso: Fallback a catálogo local:', err);
+      console.warn('Aviso: Error sincronizando datos con Supabase:', err);
     } finally {
       setIsLoadingLiveCatalog(false);
     }
@@ -298,7 +370,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     syncLiveCatalog();
-  }, [currentTenantId]);
+  }, [currentTenantId, currentUser.sucursalId]);
 
   // Autenticación por PIN táctil
   const loginWithPinCode = async (pin: string, userId?: string) => {
@@ -527,6 +599,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       }
 
+      // Verificación estricta de caja abierta
+      if (cashRegister.estado !== 'abierta' || !cashRegister.aperturaActual?.id || !isValidUUID(cashRegister.aperturaActual.id)) {
+        soundManager.playError();
+        return {
+          success: false,
+          error: 'No se puede procesar la venta: La caja se encuentra cerrada o sin un turno válido en Supabase. Debes abrir caja primero.',
+        };
+      }
+
       if (cart.length === 0) {
         soundManager.playError();
         return { success: false, error: 'El carrito está vacío' };
@@ -741,16 +822,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
   };
 
-  // Movimientos de efectivo (entradas y salidas de caja)
-  const addCashMovement = (
+  // Movimientos de efectivo (entradas y salidas de caja en Supabase)
+  const addCashMovement = async (
     tipo: 'entrada_efectivo' | 'retiro_gasto' | 'retiro_deposito',
     monto: number,
     motivo: string
-  ) => {
+  ): Promise<{ success: boolean; error?: string }> => {
     soundManager.playTouchClick();
+
+    if (isSupabaseConfigured()) {
+      const aperturaId = cashRegister.aperturaActual?.id;
+      if (!aperturaId || !isValidUUID(aperturaId)) {
+        soundManager.playError();
+        return {
+          success: false,
+          error: 'No se puede registrar movimiento: La caja se encuentra cerrada o sin apertura activa.',
+        };
+      }
+
+      const res = await insertLiveCashMovement(aperturaId, tipo, monto, motivo, currentUser.id);
+      if (!res.success) {
+        soundManager.playError();
+        return { success: false, error: res.error };
+      }
+
+      // Recargar lista actualizada de movimientos desde Supabase
+      const liveMovs = await fetchLiveCashMovements(aperturaId);
+      if (liveMovs) {
+        setCashMovements(liveMovs);
+      } else {
+        const movement: CashMovement = {
+          id: res.data?.id || `mov-${Date.now()}`,
+          aperturaId,
+          tipo,
+          monto,
+          motivo,
+          usuarioNombre: currentUser.nombre,
+          fecha: new Date().toISOString(),
+        };
+        setCashMovements(prev => [movement, ...prev]);
+      }
+
+      soundManager.playPaymentSuccess();
+      return { success: true };
+    }
+
+    // Modo local / Fallback
     const movement: CashMovement = {
       id: `mov-${Date.now()}`,
-      aperturaId: cashRegister.aperturaActual?.id || 'ap000000-0000-0000-0000-000000000001',
+      aperturaId: cashRegister.aperturaActual?.id || 'ap-local',
       tipo,
       monto,
       motivo,
@@ -758,14 +878,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       fecha: new Date().toISOString(),
     };
     setCashMovements(prev => [movement, ...prev]);
+    soundManager.playPaymentSuccess();
+    return { success: true };
   };
 
   // Cierre de caja ciego (Blind close)
-  const closeCashRegisterBlind = (
+  const closeCashRegisterBlind = async (
     montoDeclarado: number,
     desglose?: Record<string, number>,
     notas?: string
-  ): CashClosingReport => {
+  ): Promise<CashClosingReport> => {
     const fondoInicial = cashRegister.aperturaActual?.montoInicial || 0;
 
     // Calcular ventas en efectivo del turno
@@ -802,9 +924,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const montoEsperado = Number((fondoInicial + ventasEfectivo + entradasExtra - retiros + abonos).toFixed(2));
     const diferencia = Number((montoDeclarado - montoEsperado).toFixed(2));
 
+    const aperturaIdActual = cashRegister.aperturaActual?.id || '';
+
+    // Si Supabase está configurado y hay apertura válida, cerrar en la nube
+    if (isSupabaseConfigured() && isValidUUID(aperturaIdActual)) {
+      await closeLiveCashRegister(
+        aperturaIdActual,
+        currentUser.id,
+        montoDeclarado,
+        montoEsperado,
+        diferencia,
+        desglose,
+        notas
+      );
+    }
+
     const report: CashClosingReport = {
       id: `close-${Date.now()}`,
-      aperturaId: cashRegister.aperturaActual?.id || 'ap000000-0000-0000-0000-000000000001',
+      aperturaId: aperturaIdActual,
       cajeroNombre: currentUser.nombre,
       fechaCierre: new Date().toISOString(),
       montoInicial: fondoInicial,
@@ -828,31 +965,147 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return report;
   };
 
-  const openCashRegister = (montoInicial: number) => {
+  const openCashRegister = async (montoInicial: number): Promise<{ success: boolean; error?: string }> => {
     soundManager.playTouchClick();
+
+    if (isSupabaseConfigured()) {
+      const activeSucursalId = currentUser.sucursalId;
+      console.log('[AppContext] Abriendo caja en Supabase...', {
+        cajaId: cashRegister.id,
+        sucursalId: activeSucursalId,
+        cajeroId: currentUser.id,
+        montoInicial,
+      });
+
+      const res = await openLiveCashRegister(
+        cashRegister.id,
+        activeSucursalId,
+        currentUser.id,
+        montoInicial,
+        'Apertura de turno desde POS'
+      );
+
+      if (!res.success) {
+        soundManager.playError();
+        return { success: false, error: res.error };
+      }
+
+      // Sincronizar estado actualizado desde Supabase
+      const liveReg = await fetchLiveCashRegister(activeSucursalId);
+      if (liveReg && liveReg.estado === 'abierta') {
+        setCashRegister(liveReg);
+      } else if (res.aperturaId) {
+        setCashRegister({
+          id: res.caja?.id || cashRegister.id,
+          nombre: res.caja?.nombre || cashRegister.nombre || 'Caja Mostrador',
+          codigo: res.caja?.codigo || cashRegister.codigo || 'CAJA-01',
+          estado: 'abierta',
+          aperturaActual: {
+            id: res.aperturaId!,
+            usuarioId: currentUser.id,
+            usuarioNombre: `${currentUser.nombre} ${currentUser.apellido}`,
+            fechaApertura: new Date().toISOString(),
+            montoInicial,
+          },
+        });
+      }
+
+      // Cargar movimientos de la nueva apertura
+      if (res.aperturaId) {
+        const liveMovs = await fetchLiveCashMovements(res.aperturaId);
+        if (liveMovs) {
+          setCashMovements(liveMovs);
+        } else {
+          setCashMovements([]);
+        }
+      }
+
+      soundManager.playPaymentSuccess();
+      return { success: true };
+    }
+
+    // Modo local / Sin Supabase
     setCashRegister({
-      id: '11111111-1111-1111-1111-111111111115',
-      nombre: 'Caja Principal (Mostrador)',
+      id: 'caja-local-01',
+      nombre: 'Caja Mostrador',
       codigo: 'CAJA-01',
       estado: 'abierta',
       aperturaActual: {
-        id: 'ap000000-0000-0000-0000-000000000001',
+        id: `ap-${Date.now()}`,
         usuarioId: currentUser.id,
         usuarioNombre: `${currentUser.nombre} ${currentUser.apellido}`,
         fechaApertura: new Date().toISOString(),
         montoInicial,
       },
     });
+
+    soundManager.playPaymentSuccess();
+    return { success: true };
   };
 
-  // Abonos de Fiados
-  const registerCustomerPayment = (
+  // Abonos de Fiados (Live en Supabase)
+  const registerCustomerPayment = async (
     clienteId: string,
     monto: number,
-    metodo: 'efectivo' | 'transferencia',
+    metodo: 'efectivo' | 'transferencia' = 'efectivo',
     notas?: string
-  ) => {
-    soundManager.playPaymentSuccess();
+  ): Promise<{ success: boolean; error?: string }> => {
+    soundManager.playTouchClick();
+
+    if (isSupabaseConfigured()) {
+      const aperturaId = cashRegister.aperturaActual?.id;
+      const res = await insertLiveCustomerPayment(
+        clienteId,
+        monto,
+        metodo,
+        notas,
+        aperturaId,
+        currentUser.id
+      );
+
+      if (!res.success) {
+        soundManager.playError();
+        return { success: false, error: res.error || 'Error registrando abono en Supabase.' };
+      }
+
+      // Si fue pagado en efectivo y hay caja abierta, registrar entrada de efectivo
+      if (metodo === 'efectivo' && aperturaId && isValidUUID(aperturaId)) {
+        await insertLiveCashMovement(
+          aperturaId,
+          'entrada_efectivo',
+          monto,
+          `Abono de fiado: ${notas || 'Pago de cliente'}`,
+          currentUser.id
+        );
+        const liveMovs = await fetchLiveCashMovements(aperturaId);
+        if (liveMovs) setCashMovements(liveMovs);
+      }
+
+      // Sincronizar clientes actualizados desde Supabase
+      const liveCust = await fetchLiveCustomers(currentTenantId);
+      if (liveCust) {
+        setCustomers(liveCust);
+      } else {
+        setCustomers(prev =>
+          prev.map(c => {
+            if (c.id === clienteId) {
+              const nuevoSaldo = Math.max(0, Number((c.saldoDeudorActual - monto).toFixed(2)));
+              return {
+                ...c,
+                saldoDeudorActual: nuevoSaldo,
+                bloqueadoPorMora: nuevoSaldo > c.limiteCredito,
+              };
+            }
+            return c;
+          })
+        );
+      }
+
+      soundManager.playPaymentSuccess();
+      return { success: true };
+    }
+
+    // Modo local
     setCustomers(prev =>
       prev.map(c => {
         if (c.id === clienteId) {
@@ -870,11 +1123,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (metodo === 'efectivo') {
       addCashMovement('entrada_efectivo', monto, `Abono de fiado: ${notas || 'Pago de cliente'}`);
     }
+    soundManager.playPaymentSuccess();
+    return { success: true };
   };
 
-  const addNewCustomer = (
+  const addNewCustomer = async (
     clienteData: Omit<Customer, 'id' | 'saldoDeudorActual' | 'bloqueadoPorMora' | 'activo'>
-  ): Customer => {
+  ): Promise<{ success: boolean; customer?: Customer; error?: string }> => {
+    soundManager.playTouchClick();
+
+    if (isSupabaseConfigured()) {
+      const res = await insertLiveCustomer(clienteData, currentTenantId);
+      if (!res.success || !res.customer) {
+        soundManager.playError();
+        return { success: false, error: res.error || 'Error al guardar cliente en Supabase.' };
+      }
+
+      setCustomers(prev => [...prev, res.customer!]);
+      soundManager.playPaymentSuccess();
+      return { success: true, customer: res.customer };
+    }
+
+    // Modo local
     const newCust: Customer = {
       id: `cust-${Date.now()}`,
       ...clienteData,
@@ -883,10 +1153,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       activo: true,
     };
     setCustomers(prev => [...prev, newCust]);
-    return newCust;
+    soundManager.playPaymentSuccess();
+    return { success: true, customer: newCust };
   };
 
-  const addExpense = (expenseData: Omit<OperationalExpense, 'id' | 'usuarioNombre' | 'fecha'>) => {
+  const addExpense = async (
+    expenseData: Omit<OperationalExpense, 'id' | 'usuarioNombre' | 'fecha'>
+  ): Promise<{ success: boolean; error?: string }> => {
+    soundManager.playTouchClick();
+
+    if (isSupabaseConfigured()) {
+      const sucursalId = currentUser.sucursalId;
+      const aperturaId = cashRegister.aperturaActual?.id;
+
+      const res = await insertLiveExpense(
+        expenseData,
+        currentTenantId,
+        sucursalId,
+        aperturaId,
+        currentUser.id
+      );
+
+      if (!res.success) {
+        soundManager.playError();
+        return { success: false, error: res.error || 'Error al guardar gasto en Supabase.' };
+      }
+
+      // Si fue pagado desde caja y la caja está abierta, registrar movimiento de caja
+      if (expenseData.pagadoDesdeCaja && aperturaId && isValidUUID(aperturaId)) {
+        await insertLiveCashMovement(
+          aperturaId,
+          'retiro_gasto',
+          expenseData.monto,
+          `Gasto: ${expenseData.descripcion}`,
+          currentUser.id
+        );
+        const liveMovs = await fetchLiveCashMovements(aperturaId);
+        if (liveMovs) setCashMovements(liveMovs);
+      }
+
+      // Recargar gastos desde Supabase
+      const liveExp = await fetchLiveExpenses(currentTenantId, sucursalId);
+      if (liveExp) {
+        setExpenses(liveExp);
+      } else {
+        const expense: OperationalExpense = {
+          id: res.data?.id || `exp-${Date.now()}`,
+          ...expenseData,
+          fecha: new Date().toISOString(),
+          usuarioNombre: currentUser.nombre,
+        };
+        setExpenses(prev => [expense, ...prev]);
+      }
+
+      soundManager.playPaymentSuccess();
+      return { success: true };
+    }
+
+    // Modo local
     const expense: OperationalExpense = {
       id: `exp-${Date.now()}`,
       ...expenseData,
@@ -898,6 +1222,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (expenseData.pagadoDesdeCaja) {
       addCashMovement('retiro_gasto', expenseData.monto, `Gasto: ${expenseData.descripcion}`);
     }
+    soundManager.playPaymentSuccess();
+    return { success: true };
   };
 
   return (

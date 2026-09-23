@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, PlusCircle, AlertTriangle, X } from 'lucide-react';
+import { Search, PlusCircle, AlertTriangle, X, PackageX } from 'lucide-react';
 import { Product, ProductPresentation } from '../../types';
 
 interface ProductGridProps {
@@ -87,10 +87,27 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onOpenQuickRegister })
 
       {/* Cuadrícula de Productos */}
       <div className="flex-1 overflow-y-auto pr-1">
-        {filteredProducts.length === 0 ? (
+        {products.length === 0 ? (
+          <div className="h-64 flex flex-col items-center justify-center text-center p-6 text-slate-500 bg-slate-900/40 rounded-2xl border border-dashed border-slate-800">
+            <div className="w-14 h-14 rounded-2xl bg-slate-800/80 text-slate-400 flex items-center justify-center mb-3 shadow-inner">
+              <PackageX className="w-7 h-7 text-emerald-400/80" />
+            </div>
+            <p className="text-base font-bold text-slate-200">Catálogo Vacío en Supabase</p>
+            <p className="text-xs text-slate-400 mt-1 max-w-sm">
+              No hay productos registrados en tu base de datos para este negocio. Agrega tu primer producto para comenzar a vender.
+            </p>
+            <button
+              onClick={() => onOpenQuickRegister()}
+              className="mt-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition cursor-pointer active:scale-95"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>Registrar Primer Producto</span>
+            </button>
+          </div>
+        ) : filteredProducts.length === 0 ? (
           <div className="h-48 flex flex-col items-center justify-center text-center p-6 text-slate-500">
             <AlertTriangle className="w-8 h-8 text-amber-500/80 mb-2" />
-            <p className="text-sm font-bold text-slate-300">No se encontraron productos</p>
+            <p className="text-sm font-bold text-slate-300">No se encontraron productos coincidentes</p>
             <p className="text-xs text-slate-500 mt-1">¿Deseas darlo de alta rápidamente?</p>
             <button
               onClick={() => onOpenQuickRegister(searchTerm)}

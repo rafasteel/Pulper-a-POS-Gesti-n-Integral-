@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { CreditCard, PauseCircle, Trash2, ShieldCheck } from 'lucide-react';
+import { CreditCard, PauseCircle, Trash2, ShieldCheck, Lock } from 'lucide-react';
 import { soundManager } from '../../utils/audioHaptics';
 
 interface CartSummaryProps {
@@ -12,7 +12,8 @@ export const CartSummary: React.FC<CartSummaryProps> = ({
   onOpenPaymentModal,
   onOpenPauseModal,
 }) => {
-  const { cart, clearCart, config } = useApp();
+  const { cart, clearCart, config, cashRegister } = useApp();
+  const isCashRegisterOpen = cashRegister.estado === 'abierta' && Boolean(cashRegister.aperturaActual?.id);
 
   const subtotal = cart.reduce((sum, item) => sum + item.cantidad * item.precioUnitario, 0);
   const totalDescuentos = cart.reduce((sum, item) => sum + item.descuentoUnitario * item.cantidad, 0);
@@ -84,21 +85,35 @@ export const CartSummary: React.FC<CartSummaryProps> = ({
           <span className="text-[10px] font-bold mt-0.5">Pausar</span>
         </button>
 
-        {/* Cobrar Principal (Botón Gigante Verde) */}
-        <button
-          onClick={() => {
-            soundManager.playTouchClick();
-            onOpenPaymentModal();
-          }}
-          disabled={cart.length === 0}
-          className="col-span-2 h-12 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 transition cursor-pointer active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
-        >
-          <CreditCard className="w-5 h-5 text-slate-950" />
-          <span>Cobrar</span>
-          <span className="text-xs bg-slate-950/20 text-slate-950 px-1.5 py-0.5 rounded font-mono font-bold">
-            F12
-          </span>
-        </button>
+        {/* Cobrar Principal (Botón Gigante Verde o Bloqueado por Caja Cerrada) */}
+        {!isCashRegisterOpen ? (
+          <button
+            disabled
+            title="Debes abrir caja primero antes de poder cobrar"
+            className="col-span-2 h-12 rounded-xl bg-slate-800/90 border border-amber-500/40 text-amber-300 font-bold text-xs flex flex-col items-center justify-center gap-0.5 opacity-80 cursor-not-allowed shadow-inner"
+          >
+            <div className="flex items-center gap-1.5 text-amber-400">
+              <Lock className="w-3.5 h-3.5" />
+              <span className="font-extrabold uppercase tracking-wide">Caja Cerrada</span>
+            </div>
+            <span className="text-[10px] text-amber-200/80 font-normal">Debes abrir caja primero</span>
+          </button>
+        ) : (
+          <button
+            onClick={() => {
+              soundManager.playTouchClick();
+              onOpenPaymentModal();
+            }}
+            disabled={cart.length === 0}
+            className="col-span-2 h-12 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 transition cursor-pointer active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+          >
+            <CreditCard className="w-5 h-5 text-slate-950" />
+            <span>Cobrar</span>
+            <span className="text-xs bg-slate-950/20 text-slate-950 px-1.5 py-0.5 rounded font-mono font-bold">
+              F12
+            </span>
+          </button>
+        )}
       </div>
 
       <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-500">
